@@ -1,0 +1,131 @@
+@import "tailwindcss";
+
+:root {
+  /* 1inch Dark Theme + NEAR Green Accents */
+  --background: #0a0a0a;
+  --foreground: #ffffff;
+  --card-bg: #1a1a1a;
+  --border: #2a2a2a;
+  --border-hover: #3a3a3a;
+  
+  /* 1inch Brand Colors */
+  --primary: #dc2626; /* Dark red */
+  --primary-hover: #b91c1c;
+  --secondary: #1f1f1f;
+  --accent: #262626;
+  
+  /* NEAR Brand Colors */
+  --near-green: #00d395;
+  --near-green-hover: #00b882;
+  --near-green-light: #00e6a3;
+  
+  /* Status Colors */
+  --success: var(--near-green);
+  --success-hover: var(--near-green-hover);
+  --warning: #f59e0b;
+  --error: var(--primary);
+  
+  /* Text Colors */
+  --text-primary: #ffffff;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card-bg);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-secondary: var(--secondary);
+  --color-accent: var(--accent);
+  --color-near-green: var(--near-green);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  line-height: 1.5;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-hover);
+}
+
+/* Custom button styles */
+.btn-primary {
+  background: linear-gradient(135deg, var(--near-green) 0%, var(--near-green-light) 100%);
+  border: none;
+  color: #000;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.btn-primary:hover {
+  background: linear-gradient(135deg, var(--near-green-hover) 0%, var(--near-green) 100%);
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  transition: all 0.2s ease;
+}
+
+.btn-secondary:hover {
+  background: var(--accent);
+  border-color: var(--border-hover);
+}
+
+/* Card styles */
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  backdrop-filter: blur(10px);
+}
+
+.card:hover {
+  border-color: var(--border-hover);
+}
+
+/* Gradient backgrounds */
+.gradient-bg {
+  background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+}
+
+.gradient-border {
+  position: relative;
+}
+
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  background: linear-gradient(135deg, var(--near-green), var(--primary));
+  border-radius: inherit;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: xor;
+}

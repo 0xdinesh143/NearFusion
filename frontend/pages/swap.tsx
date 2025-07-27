@@ -4,6 +4,14 @@ import { useState } from 'react';
 import { ArrowUpDown } from 'lucide-react';
 import Link from 'next/link';
 import { Geist_Mono } from "next/font/google";
+import Image from 'next/image';
+import { setupWalletSelector } from "@near-wallet-selector/core";
+import { setupModal } from "@near-wallet-selector/modal-ui";
+import { setupMeteorWallet } from '@near-wallet-selector/meteor-wallet';
+import { setupHereWallet } from '@near-wallet-selector/here-wallet';
+import { setupMyNearWallet } from '@near-wallet-selector/my-near-wallet';
+import { useAppKit } from '@reown/appkit/react';
+import { useAccount } from 'wagmi';
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
@@ -11,9 +19,9 @@ const geistMono = Geist_Mono({
 });
 
 export default function SwapPage() {
-  // Mock wallet state for now
-  const [isConnected, setIsConnected] = useState(false);
-  const [address, setAddress] = useState('');
+  const { open, close } = useAppKit();
+  const { isConnected: isETHConnected } = useAccount();
+  const [isNEARConnected, setIsNEARConnected] = useState(false);
   
   const [fromAmount, setFromAmount] = useState('');
   const [toAmount, setToAmount] = useState('');
@@ -50,14 +58,25 @@ export default function SwapPage() {
     setToAmount('');
   };
 
-  const handleConnectWallet = () => {
-    // Mock wallet connection
-    setIsConnected(true);
-    setAddress('0x742d...8a3c');
+  async function handleNearConnectWallet() {
+    const selector = await setupWalletSelector({
+      network: "testnet",
+      modules: [setupMeteorWallet(), setupHereWallet(), setupMyNearWallet()],
+    });
+    
+    const modal = setupModal(selector, {
+      contractId: "test.testnet",
+    });
+    modal.show();
+    setIsNEARConnected(true);
   };
 
+  async function handleETHConnectWallet() {
+    open();
+  }
+
   const getTokenIcon = (token: string) => {
-    return token === 'ETH' ? '⟠' : '🔺';
+    return token === 'ETH' ? 'https://assets.coingecko.com/coins/images/279/standard/ethereum.png' : 'https://assets.coingecko.com/coins/images/10365/standard/near.jpg';
   };
 
   return (
@@ -91,8 +110,8 @@ export default function SwapPage() {
                 placeholder="0.0"
                 className="text-4xl font-light bg-transparent border-none outline-none text-white placeholder-gray-400 w-full"
               />
-              <div className="flex items-center gap-2 bg-gray-700 rounded-xl px-3 py-2">
-                <span className="text-xl">{getTokenIcon(fromToken)}</span>
+              <div className="min-w-fit flex items-center gap-2 bg-gray-700 rounded-xl px-3 py-2">
+                <Image src={getTokenIcon(fromToken)} alt={fromToken} width={20} height={20} className="rounded-full" />
                 <span className="font-semibold">{fromToken}</span>
               </div>
             </div>
@@ -103,13 +122,13 @@ export default function SwapPage() {
           <div className="flex items-center justify-center gap-2 py-2">
             <button 
               onClick={() => handlePercentage(10)}
-              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition-all"
+              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition-all cursor-pointer"
             >
               10%
             </button>
             <button 
               onClick={() => handlePercentage(25)}
-              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition-all"
+              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition-all cursor-pointer"
             >
               25%
             </button>
@@ -117,20 +136,20 @@ export default function SwapPage() {
             {/* Swap Direction Button */}
             <button
               onClick={handleSwapTokens}
-              className="p-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-all"
+              className="p-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-all cursor-pointer"
             >
               <ArrowUpDown className="w-4 h-4" />
             </button>
             
             <button 
               onClick={() => handlePercentage(50)}
-              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition-all"
+              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition-all cursor-pointer"
             >
               50%
             </button>
             <button 
               onClick={() => handlePercentage(100)}
-              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition-all"
+              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition-all cursor-pointer"
             >
               MAX
             </button>
@@ -142,8 +161,8 @@ export default function SwapPage() {
               <div className="text-4xl font-light">
                 {toAmount || '0.0'}
               </div>
-              <div className="flex items-center gap-2 bg-gray-700 rounded-xl px-3 py-2">
-                <span className="text-xl">{getTokenIcon(toToken)}</span>
+              <div className="min-w-fit flex items-center gap-2 bg-gray-700 rounded-xl px-3 py-2">
+                <Image src={getTokenIcon(toToken)} alt={toToken} width={20} height={20} className="rounded-full" />
                 <span className="font-semibold">{toToken}</span>
               </div>
             </div>
@@ -151,13 +170,17 @@ export default function SwapPage() {
           </div>
         </div>
 
-        {/* Connect Wallet Button */}
-        <button 
-          onClick={handleConnectWallet} 
-          className="w-full mt-6 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-4 rounded-xl transition-all"
-        >
-          {isConnected ? `Connected: ${address}` : 'Connect Wallet'}
-        </button>
+       {
+        isETHConnected && isNEARConnected ? (
+          <button className="w-full mt-6 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-4 rounded-xl transition-all cursor-pointer">  Swap </button>
+        ) : (
+          isETHConnected ? (
+            <button onClick={handleNearConnectWallet} className="w-full mt-6 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-4 rounded-xl transition-all cursor-pointer"> Connect NEAR Wallet </button>
+          ) : (
+            <button onClick={handleETHConnectWallet} className="w-full mt-6 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-4 rounded-xl transition-all cursor-pointer">  Connect ETH Wallet </button>
+          )
+        )
+       }
       </div>
     </div>
   );

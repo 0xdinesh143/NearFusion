@@ -18,7 +18,7 @@ export default function Home() {
       className={`${geistSans.className} ${geistMono.className} font-sans min-h-screen bg-gray-950 text-white flex flex-col justify-between`}
     >
       {/* Header */}
-      <header className="border-b border-gray-800 bg-gray-900/50 backdrop-blur-sm">
+      <header className="border-b border-gray-800 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
           <div className="flex items-center gap-3">
             <Link href="/">
@@ -63,12 +63,12 @@ export default function Home() {
             
           </div>
           <div className="grid md:grid-cols-2 gap-8 mt-16">
-            <div className="card p-6 text-center">
+            <div className="bg-gray-800/50 rounded-xl border border-gray-700 p-6 text-center">
               <div className="text-4xl mb-4">🔒</div>
               <h3 className="text-xl font-semibold mb-2">Secure Swap</h3>
               <p className="text-gray-400">Hash time-locked contracts ensure your funds are always protected</p>
             </div>
-            <div className="card p-6 text-center">
+            <div className="bg-gray-800/50 rounded-xl border border-gray-700 p-6 text-center">
               <div className="text-4xl mb-4">💎</div>
               <h3 className="text-xl font-semibold mb-2">Best Rates</h3>
               <p className="text-gray-400">Powered by 1inch protocol aggregation for optimal swap rates</p>

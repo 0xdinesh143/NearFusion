@@ -1,0 +1,23 @@
+# Build artifacts
+target/
+**/*.rs.bk
+*.wasm
+
+# NEAR development
+neardev/
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node modules for any JS tooling
+node_modules/ 

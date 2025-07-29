@@ -1,0 +1,27 @@
+{
+  "name": "near-escrow-contracts",
+  "version": "1.0.0",
+  "description": "NEAR Protocol contracts for EVM-NEAR cross-chain atomic swaps",
+  "scripts": {
+    "build": "./build.sh",
+    "test": "cargo test",
+    "deploy": "./scripts/deploy.sh",
+    "test-escrow": "./scripts/test-escrow.sh",
+    "fmt": "cargo fmt",
+    "clippy": "cargo clippy",
+    "clean": "cargo clean"
+  },
+  "keywords": [
+    "near",
+    "atomic-swap",
+    "cross-chain",
+    "escrow",
+    "htlc",
+    "blockchain"
+  ],
+  "author": "NearFusion Team",
+  "license": "MIT",
+  "devDependencies": {
+    "near-cli-rs": "^0.7.0"
+  }
+}

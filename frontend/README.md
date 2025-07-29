@@ -1,4 +1,4 @@
-# CrossFusion Frontend
+# NearFusion Frontend
 
 A beautiful cross-chain swap interface for bridging tokens between Ethereum and NEAR Protocol.
 

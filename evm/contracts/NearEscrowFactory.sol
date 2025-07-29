@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity 0.8.23;
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -49,13 +49,13 @@ contract NearEscrowFactory is INearEscrowFactory, Ownable {
     address public treasury;
 
     /// @notice Near network configuration
-    struct NearConfig {
+    struct Config {
         uint256 minConfirmations;    // Minimum Near confirmations
         uint256 dustThreshold;       // Minimum Near amount in satoshis
         uint256 maxAmount;           // Maximum Near amount in satoshis
     }
 
-    NearConfig public NearConfig;
+    Config public NearConfig;
 
     error InvalidFeeAmount();
     error FeeTransferFailed();
@@ -64,7 +64,7 @@ contract NearEscrowFactory is INearEscrowFactory, Ownable {
 
     event CreationFeeUpdated(uint256 oldFee, uint256 newFee);
     event TreasuryUpdated(address oldTreasury, address newTreasury);
-    event NearConfigUpdated(NearConfig config);
+    event NearConfigUpdated(Config config);
 
     constructor(
         IERC20 accessToken,
@@ -73,7 +73,7 @@ contract NearEscrowFactory is INearEscrowFactory, Ownable {
         uint32 rescueDelayDst,
         uint256 _creationFee,
         address _treasury,
-        NearConfig memory _NearConfig
+        Config memory _NearConfig
     ) Ownable(owner) {
         ACCESS_TOKEN = accessToken;
         creationFee = _creationFee;
@@ -201,7 +201,7 @@ contract NearEscrowFactory is INearEscrowFactory, Ownable {
      * @notice Updates Near configuration (only owner)
      * @param newConfig New Near configuration
      */
-    function setNearConfig(NearConfig calldata newConfig) external onlyOwner {
+    function setNearConfig(Config calldata newConfig) external onlyOwner {
         NearConfig = newConfig;
         emit NearConfigUpdated(newConfig);
     }

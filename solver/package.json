@@ -1,0 +1,53 @@
+{
+  "name": "NearFusion-shade-agent-solver",
+  "version": "1.0.0",
+  "description": "Decentralized solver for 1inch Fusion+ cross-chain swaps using NEAR's Shade Agent Framework",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "jest",
+    "lint": "eslint src/**/*.ts"
+  },
+  "keywords": [
+    "1inch",
+    "fusion",
+    "cross-chain",
+    "near",
+    "shade-agent",
+    "tee",
+    "solver",
+    "defi"
+  ],
+  "author": "NearFusion Team",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "cors": "^2.8.5",
+    "crypto": "^1.0.1",
+    "dotenv": "^16.3.0",
+    "ethers": "^6.8.0",
+    "express": "^4.18.0",
+    "near-api-js": "^6.2.4",
+    "web3": "^4.0.0",
+    "ws": "^8.14.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.0",
+    "@types/express": "^4.17.0",
+    "@types/jest": "^29.0.0",
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "jest": "^29.0.0",
+    "ts-jest": "^29.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.2.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

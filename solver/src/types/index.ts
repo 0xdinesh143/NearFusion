@@ -120,27 +120,8 @@ export interface SolverConfig {
   evm: {
     privateKey: string;
   };
-  
-  // Quote service configuration
-  quote: {
-    priceFeeds: {
-      coingecko?: {
-        apiKey?: string;
-        apiUrl: string;
-      };
-      defillama?: {
-        apiUrl: string;
-      };
-      custom?: {
-        apiUrl: string;
-        apiKey?: string;
-      };
-    };
-    updateInterval: number;
-    slippageTolerance: number;
-    baseFeePercentage: number;
-  };
-  
+
+
   // Swap service configuration
   swap: {
     defaultTimelock: number;
@@ -179,12 +160,8 @@ export interface SolverState {
   failedSwaps: number;
   totalVolumeUSD: string;
   balances: TokenBalance[];
-  lastHealthCheck: Date;
   services: {
     swap: boolean;
-    quote: boolean;
-    evmEscrow: boolean;
-    nearEscrow: boolean;
     tee: boolean;
   };
 }
@@ -278,9 +255,49 @@ export interface SwapRoute {
 
 // WebSocket Event Types
 export interface WebSocketEvent {
-  type: 'swapCreated' | 'swapStatusChanged' | 'swapCompleted' | 'swapCancelled' | 'error';
-  data: any;
+  type: string;
   timestamp: Date;
+}
+
+export interface SwapCompletedEvent extends WebSocketEvent {
+  type: 'swapCompleted';
+  data: SwapResult;
+}
+
+export interface SwapCancelledEvent extends WebSocketEvent {
+  type: 'swapCancelled';
+  data: { swapId: string };
+}
+
+export interface SwapUpdateEvent extends WebSocketEvent {
+  type: 'completed' | 'cancelled' | 'statusChanged';
+  swapId: string;
+  data: SwapResult | SwapOrder | { swapId: string };
+}
+
+export interface SolverErrorEvent extends WebSocketEvent {
+  type: 'error';
+  error: string;
+}
+
+export interface SolverStateEvent extends WebSocketEvent {
+  type: 'solverState';
+  data: SolverState;
+}
+
+// WebSocket Client Events (from frontend to backend)
+export interface WebSocketClientEvents {
+  subscribeToSwap: (swapId: string) => void;
+  unsubscribeFromSwap: (swapId: string) => void;
+}
+
+// WebSocket Server Events (from backend to frontend)
+export interface WebSocketServerEvents {
+  swapCompleted: (event: SwapCompletedEvent) => void;
+  swapCancelled: (event: SwapCancelledEvent) => void;
+  swapUpdate: (event: SwapUpdateEvent) => void;
+  solverError: (event: SolverErrorEvent) => void;
+  solverState: (state: SolverState) => void;
 }
 
 // Metrics and Analytics

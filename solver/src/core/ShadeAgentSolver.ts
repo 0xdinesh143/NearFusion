@@ -1,22 +1,14 @@
 import { EventEmitter } from 'events';
 import {
-  SolverConfig,
   SolverState,
   SwapRequest,
   SwapOrder,
   SwapResult,
   SwapStatus,
-  TokenBalance,
   TEEAttestation,
-  SolverError,
-  SystemHealth,
-  HealthCheckResult,
   SolverMetrics
 } from '../types';
 import { SwapService } from '../services/SwapService';
-import { QuoteService } from '../services/QuoteService';
-import { EVMEscrowService } from '../services/EVMEscrowService';
-import { NearEscrowService } from '../services/NearEscrowService';
 import { TEESecurityService } from '../services/TEESecurityService';
 import { Logger } from '../utils/Logger';
 
@@ -27,15 +19,10 @@ import { Logger } from '../utils/Logger';
 export class ShadeAgentSolver extends EventEmitter {
   private state: SolverState;
   private isRunning: boolean = false;
-  private healthCheckInterval?: NodeJS.Timeout;
   private startTime: Date = new Date();
 
   constructor(
-    private config: SolverConfig,
     private swapService: SwapService,
-    private quoteService: QuoteService,
-    private evmEscrowService: EVMEscrowService,
-    private nearEscrowService: NearEscrowService,
     private teeService: TEESecurityService,
     private logger: Logger
   ) {
@@ -63,8 +50,7 @@ export class ShadeAgentSolver extends EventEmitter {
       // Initialize all services
       await this.initializeServices();
 
-      // Start health monitoring
-      this.startHealthMonitoring();
+
 
       this.isRunning = true;
       this.state.isRunning = true;
@@ -92,15 +78,6 @@ export class ShadeAgentSolver extends EventEmitter {
     try {
       this.logger.info('Stopping Solver...');
 
-      // Stop health monitoring
-      if (this.healthCheckInterval) {
-        clearInterval(this.healthCheckInterval);
-      }
-
-      // Wait for active swaps to complete (with timeout)
-      await this.waitForActiveSwaps(30000); // 30 second timeout
-
-      // Shutdown services
       await this.shutdownServices();
 
       this.isRunning = false;
@@ -154,96 +131,44 @@ export class ShadeAgentSolver extends EventEmitter {
   }
 
   /**
-   * Create a new cross-chain swap
+   * Execute a complete cross-chain atomic swap in a single call
+   * This provides the best UX by handling the entire swap process internally
    */
-  async createSwap(request: SwapRequest): Promise<SwapOrder> {
+  async executeCompleteSwap(request: SwapRequest): Promise<SwapResult> {
     if (!this.isRunning) {
       throw new Error('Solver is not running');
     }
 
     try {
-      this.logger.info('Creating new swap', { request });
+      this.logger.info('Starting complete swap execution', { request });
 
-      const swapOrder = await this.swapService.createSwap(request);
-      
-      // Update state
+      // Update state - we're processing a new swap
       this.state.activeSwaps++;
       this.state.totalSwapsProcessed++;
 
-      this.emit('swapCreated', swapOrder);
-      return swapOrder;
-    } catch (error) {
-      this.logger.error('Failed to create swap', { error, request });
-      this.state.failedSwaps++;
-      throw error;
-    }
-  }
-
-  /**
-   * Execute swap first leg (create source escrow)
-   */
-  async executeSwapFirstLeg(swapId: string): Promise<string> {
-    if (!this.isRunning) {
-      throw new Error('Solver is not running');
-    }
-
-    try {
-      const escrowAddress = await this.swapService.executeSwapFirstLeg(swapId);
-      this.emit('swapFirstLegCompleted', { swapId, escrowAddress });
-      return escrowAddress;
-    } catch (error) {
-      this.logger.error('Failed to execute swap first leg', { error, swapId });
-      this.state.failedSwaps++;
-      throw error;
-    }
-  }
-
-  /**
-   * Execute swap second leg (create destination escrow)
-   */
-  async executeSwapSecondLeg(swapId: string): Promise<string> {
-    if (!this.isRunning) {
-      throw new Error('Solver is not running');
-    }
-
-    try {
-      const escrowAddress = await this.swapService.executeSwapSecondLeg(swapId);
-      this.emit('swapSecondLegCompleted', { swapId, escrowAddress });
-      return escrowAddress;
-    } catch (error) {
-      this.logger.error('Failed to execute swap second leg', { error, swapId });
-      this.state.failedSwaps++;
-      throw error;
-    }
-  }
-
-  /**
-   * Complete a swap by revealing the secret
-   */
-  async completeSwap(swapId: string, secret: string): Promise<SwapResult> {
-    if (!this.isRunning) {
-      throw new Error('Solver is not running');
-    }
-
-    try {
-      const result = await this.swapService.completeSwap(swapId, secret);
+      const result = await this.swapService.executeCompleteSwap(request);
       
-      // Update state
+      // Update state - swap completed successfully
       this.state.activeSwaps--;
       this.state.successfulSwaps++;
 
       this.emit('swapCompleted', result);
+      this.logger.info('Complete swap executed successfully', { swapId: result.swapId });
+      
       return result;
     } catch (error) {
-      this.logger.error('Failed to complete swap', { error, swapId });
+      this.logger.error('Failed to execute complete swap', { error, request });
+      
+      // Update state - swap failed
       this.state.failedSwaps++;
       this.state.activeSwaps--;
+      
       throw error;
     }
   }
 
   /**
-   * Cancel a swap
+   * Cancel a swap and refund if possible
    */
   async cancelSwap(swapId: string): Promise<void> {
     if (!this.isRunning) {
@@ -255,8 +180,9 @@ export class ShadeAgentSolver extends EventEmitter {
       
       // Update state
       this.state.activeSwaps--;
-
+      
       this.emit('swapCancelled', { swapId });
+      this.logger.info('Swap cancelled successfully', { swapId });
     } catch (error) {
       this.logger.error('Failed to cancel swap', { error, swapId });
       throw error;
@@ -271,7 +197,7 @@ export class ShadeAgentSolver extends EventEmitter {
   }
 
   /**
-   * Get all swaps
+   * Get all active swaps
    */
   getAllSwaps(): SwapOrder[] {
     return this.swapService.getAllSwaps();
@@ -284,116 +210,6 @@ export class ShadeAgentSolver extends EventEmitter {
     return this.swapService.getSwapsByStatus(status);
   }
 
-  /**
-   * Get system health status
-   */
-  async getHealth(): Promise<SystemHealth> {
-    const services: HealthCheckResult[] = [];
-
-    // Check swap service
-    try {
-      const swapHealthy = await this.swapService.healthCheck();
-      services.push({
-        service: 'swap',
-        status: swapHealthy ? 'healthy' : 'unhealthy',
-        lastCheck: new Date()
-      });
-    } catch (error) {
-      services.push({
-        service: 'swap',
-        status: 'unhealthy',
-        lastCheck: new Date(),
-        details: error
-      });
-    }
-
-    // Check quote service
-    try {
-      const quoteHealthy = await this.quoteService.healthCheck();
-      services.push({
-        service: 'quote',
-        status: quoteHealthy ? 'healthy' : 'unhealthy',
-        lastCheck: new Date()
-      });
-    } catch (error) {
-      services.push({
-        service: 'quote',
-        status: 'unhealthy',
-        lastCheck: new Date(),
-        details: error
-      });
-    }
-
-    // Check EVM escrow service
-    try {
-      const evmHealthy = await this.evmEscrowService.healthCheck();
-      services.push({
-        service: 'evmEscrow',
-        status: evmHealthy ? 'healthy' : 'unhealthy',
-        lastCheck: new Date()
-      });
-    } catch (error) {
-      services.push({
-        service: 'evmEscrow',
-        status: 'unhealthy',
-        lastCheck: new Date(),
-        details: error
-      });
-    }
-
-    // Check NEAR escrow service
-    try {
-      const nearHealthy = await this.nearEscrowService.healthCheck();
-      services.push({
-        service: 'nearEscrow',
-        status: nearHealthy ? 'healthy' : 'unhealthy',
-        lastCheck: new Date()
-      });
-    } catch (error) {
-      services.push({
-        service: 'nearEscrow',
-        status: 'unhealthy',
-        lastCheck: new Date(),
-        details: error
-      });
-    }
-
-    // Check TEE service
-    try {
-      const teeHealthy = await this.teeService.healthCheck();
-      services.push({
-        service: 'tee',
-        status: teeHealthy ? 'healthy' : 'unhealthy',
-        lastCheck: new Date()
-      });
-    } catch (error) {
-      services.push({
-        service: 'tee',
-        status: 'unhealthy',
-        lastCheck: new Date(),
-        details: error
-      });
-    }
-
-    // Determine overall health
-    const unhealthyServices = services.filter(s => s.status === 'unhealthy');
-    const degradedServices = services.filter(s => s.status === 'degraded');
-
-    let overall: 'healthy' | 'unhealthy' | 'degraded';
-    if (unhealthyServices.length > 0) {
-      overall = 'unhealthy';
-    } else if (degradedServices.length > 0) {
-      overall = 'degraded';
-    } else {
-      overall = 'healthy';
-    }
-
-    return {
-      overall,
-      services,
-      timestamp: new Date()
-    };
-  }
 
   private initializeState(): SolverState {
     return {
@@ -404,12 +220,8 @@ export class ShadeAgentSolver extends EventEmitter {
       failedSwaps: 0,
       totalVolumeUSD: '0',
       balances: [],
-      lastHealthCheck: new Date(),
       services: {
         swap: false,
-        quote: false,
-        evmEscrow: false,
-        nearEscrow: false,
         tee: false
       }
     };
@@ -475,15 +287,6 @@ export class ShadeAgentSolver extends EventEmitter {
       this.state.services.swap = true;
       this.logger.info('Swap service initialized');
 
-      // Initialize quote service
-      await this.quoteService.initialize();
-      this.state.services.quote = true;
-      this.logger.info('Quote service initialized');
-
-      // EVM and NEAR services are initialized by SwapService
-      this.state.services.evmEscrow = true;
-      this.state.services.nearEscrow = true;
-
       this.logger.info('All services initialized successfully');
     } catch (error) {
       this.logger.error('Service initialization failed', { error });
@@ -495,14 +298,8 @@ export class ShadeAgentSolver extends EventEmitter {
     this.logger.info('Shutting down services...');
 
     try {
-      await this.quoteService.shutdown();
-      this.state.services.quote = false;
-      this.logger.info('Quote service shutdown');
-
       // SwapService and other services don't have explicit shutdown
       this.state.services.swap = false;
-      this.state.services.evmEscrow = false;
-      this.state.services.nearEscrow = false;
       this.state.services.tee = false;
 
       this.logger.info('All services shutdown successfully');
@@ -510,88 +307,5 @@ export class ShadeAgentSolver extends EventEmitter {
       this.logger.error('Service shutdown failed', { error });
       throw error;
     }
-  }
-
-  private startHealthMonitoring(): void {
-    const healthCheckInterval = 30000; // 30 seconds
-
-    this.healthCheckInterval = setInterval(async () => {
-      try {
-        await this.performHealthCheck();
-      } catch (error) {
-        this.logger.error('Health check failed', { error });
-      }
-    }, healthCheckInterval);
-
-    this.logger.info('Health monitoring started');
-  }
-
-  private async performHealthCheck(): Promise<void> {
-    const health = await this.getHealth();
-    this.state.lastHealthCheck = new Date();
-
-    // Update service states
-    health.services.forEach(service => {
-      if (service.service in this.state.services) {
-        this.state.services[service.service as keyof typeof this.state.services] = 
-          service.status === 'healthy';
-      }
-    });
-
-    // Update balances
-    await this.updateBalances();
-
-    this.emit('healthCheck', health);
-  }
-
-  private async updateBalances(): Promise<void> {
-    try {
-      // Get EVM balances (Base Sepolia only)
-      const evmBalances = await Promise.allSettled([
-        this.evmEscrowService.getBalances('base-sepolia')
-      ]);
-
-      // Get NEAR balances
-      const nearBalances = await this.nearEscrowService.getBalances();
-
-      // Combine all balances
-      const allBalances: TokenBalance[] = [];
-      
-      // Process EVM balances
-      evmBalances.forEach(result => {
-        if (result.status === 'fulfilled') {
-          allBalances.push(...result.value);
-        }
-      });
-
-      // Add NEAR balances
-      allBalances.push(...nearBalances);
-
-      // Update state
-      this.state.balances = allBalances;
-      
-    } catch (error) {
-      this.logger.error('Failed to update balances', { error });
-    }
-  }
-
-  private async waitForActiveSwaps(timeoutMs: number): Promise<void> {
-    return new Promise((resolve) => {
-      const startTime = Date.now();
-      
-      const checkActiveSwaps = () => {
-        const activeSwaps = this.swapService.getSwapsByStatus(SwapStatus.FIRST_LEG_PENDING)
-          .concat(this.swapService.getSwapsByStatus(SwapStatus.SECOND_LEG_PENDING))
-          .concat(this.swapService.getSwapsByStatus(SwapStatus.COMPLETING));
-
-        if (activeSwaps.length === 0 || Date.now() - startTime > timeoutMs) {
-          resolve();
-        } else {
-          setTimeout(checkActiveSwaps, 1000);
-        }
-      };
-
-      checkActiveSwaps();
-    });
   }
 }

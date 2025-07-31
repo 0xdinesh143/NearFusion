@@ -1,20 +1,21 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import { createServer } from 'http';
+import { Server as SocketIOServer } from 'socket.io';
 import { ShadeAgentSolver } from './core/ShadeAgentSolver';
-import { SwapService, SwapServiceConfig } from './services/SwapService';
-import { QuoteService, QuoteServiceConfig } from './services/QuoteService';
+import { SwapService } from './services/SwapService';
 import { EVMEscrowService } from './services/EVMEscrowService';
 import { NearEscrowService } from './services/NearEscrowService';
-import { TEESecurityService, TEEConfig } from './services/TEESecurityService';
+import { TEESecurityService } from './services/TEESecurityService';
 import { Logger, LogLevel } from './utils/Logger';
 import { 
   SolverConfig, 
-  NetworkConfig, 
-  ChainId, 
   SwapRequest,
   SwapQuoteRequest,
-  ApiResponse
+  ApiResponse,
+  SwapResult,
+  SwapOrder
 } from './types';
 
 // Initialize logger
@@ -47,7 +48,7 @@ function loadConfiguration(): SolverConfig {
           symbol: 'NEAR',
           decimals: 24
         },
-        blockExplorerUrl: 'https://explorer.testnet.near.org'
+        blockExplorerUrl: 'https://testnet.nearblocks.io/'
       }
     },
     near: {
@@ -59,20 +60,6 @@ function loadConfiguration(): SolverConfig {
     },
     evm: {
       privateKey: process.env.EVM_PRIVATE_KEY || ''
-    },
-    quote: {
-      priceFeeds: {
-        defillama: {
-          apiUrl: 'https://coins.llama.fi'
-        },
-        coingecko: {
-          apiUrl: 'https://api.coingecko.com/api/v3',
-          apiKey: process.env.COINGECKO_API_KEY
-        }
-      },
-      updateInterval: 60000, // 1 minute
-      slippageTolerance: 1.0, // 1%
-      baseFeePercentage: 0.3 // 0.3%
     },
     swap: {
       defaultTimelock: 3600, // 1 hour
@@ -125,11 +112,7 @@ async function initializeServices(config: SolverConfig) {
     logger.child('NEAREscrow')
   );
 
-  // Initialize quote service
-  const quoteService = new QuoteService(
-    config.quote,
-    logger.child('Quote')
-  );
+
 
   // Initialize swap service
   const swapService = new SwapService(
@@ -143,15 +126,106 @@ async function initializeServices(config: SolverConfig) {
     teeService,
     evmEscrowService,
     nearEscrowService,
-    quoteService,
     swapService
   };
 }
 
 /**
+ * Setup WebSocket event broadcasting
+ */
+function setupWebSocketEvents(solver: ShadeAgentSolver, io: SocketIOServer): void {
+  // Handle WebSocket connections
+  io.on('connection', (socket) => {
+    logger.info('Client connected to WebSocket', { socketId: socket.id });
+
+    // Send current solver state on connection
+    socket.emit('solverState', solver.getState());
+
+    // Handle client disconnection
+    socket.on('disconnect', () => {
+      logger.info('Client disconnected from WebSocket', { socketId: socket.id });
+    });
+
+    // Handle client subscribing to specific swap events
+    socket.on('subscribeToSwap', (swapId: string) => {
+      socket.join(`swap:${swapId}`);
+      logger.debug('Client subscribed to swap events', { socketId: socket.id, swapId });
+    });
+
+    // Handle client unsubscribing from swap events
+    socket.on('unsubscribeFromSwap', (swapId: string) => {
+      socket.leave(`swap:${swapId}`);
+      logger.debug('Client unsubscribed from swap events', { socketId: socket.id, swapId });
+    });
+  });
+
+  // Broadcast swap events to all connected clients
+  solver.on('swapCompleted', (result: SwapResult) => {
+    logger.debug('Broadcasting swap completed event', { swapId: result.swapId });
+    
+    // Broadcast to all clients
+    io.emit('swapCompleted', {
+      type: 'swapCompleted',
+      data: result,
+      timestamp: new Date()
+    });
+
+    // Broadcast to specific swap subscribers
+    io.to(`swap:${result.swapId}`).emit('swapUpdate', {
+      type: 'completed',
+      swapId: result.swapId,
+      data: result,
+      timestamp: new Date()
+    });
+  });
+
+  solver.on('swapCancelled', (data: { swapId: string }) => {
+    logger.debug('Broadcasting swap cancelled event', { swapId: data.swapId });
+    
+    // Broadcast to all clients
+    io.emit('swapCancelled', {
+      type: 'swapCancelled',
+      data,
+      timestamp: new Date()
+    });
+
+    // Broadcast to specific swap subscribers
+    io.to(`swap:${data.swapId}`).emit('swapUpdate', {
+      type: 'cancelled',
+      swapId: data.swapId,
+      data,
+      timestamp: new Date()
+    });
+  });
+
+  solver.on('swapStatusChanged', (swap: SwapOrder) => {
+    logger.debug('Broadcasting swap status changed event', { swapId: swap.id, status: swap.status });
+    
+    // Broadcast to specific swap subscribers
+    io.to(`swap:${swap.id}`).emit('swapUpdate', {
+      type: 'statusChanged',
+      swapId: swap.id,
+      data: swap,
+      timestamp: new Date()
+    });
+  });
+
+  solver.on('error', (error: Error) => {
+    logger.debug('Broadcasting solver error event', { error: error.message });
+    
+    // Broadcast error to all clients
+    io.emit('solverError', {
+      type: 'error',
+      error: error.message,
+      timestamp: new Date()
+    });
+  });
+}
+
+/**
  * Setup API server with endpoints for frontend integration
  */
-function setupApiServer(solver: ShadeAgentSolver, quoteService: QuoteService, services: any, config: SolverConfig): express.Application {
+function setupApiServer(solver: ShadeAgentSolver, config: SolverConfig, io: SocketIOServer): express.Application {
   const app = express();
 
   // Middleware
@@ -171,6 +245,9 @@ function setupApiServer(solver: ShadeAgentSolver, quoteService: QuoteService, se
     });
     next();
   });
+
+  // Setup WebSocket event broadcasting
+  setupWebSocketEvents(solver, io);
 
   // Get solver state
   app.get('/state', (req, res) => {
@@ -193,39 +270,6 @@ function setupApiServer(solver: ShadeAgentSolver, quoteService: QuoteService, se
     }
   });
 
-  // Health check endpoint
-  app.get('/health', async (req, res) => {
-    try {
-      const health = {
-        status: 'healthy',
-        timestamp: new Date(),
-        services: {
-          evm: await services.evmEscrowService.healthCheck(),
-          near: await services.nearEscrowService.healthCheck(),
-          quote: true, // QuoteService doesn't have async health check
-          solver: solver.getState().isRunning
-        },
-        version: process.env.npm_package_version || '1.0.0',
-        environment: process.env.NODE_ENV || 'development'
-      };
-
-      const allHealthy = Object.values(health.services).every(status => status === true);
-      const statusCode = allHealthy ? 200 : 503;
-      
-      res.status(statusCode).json({
-        success: allHealthy,
-        data: health,
-        timestamp: new Date()
-      });
-    } catch (error) {
-      logger.error('Health check failed', { error });
-      res.status(503).json({
-        success: false,
-        error: 'Health check failed',
-        timestamp: new Date()
-      });
-    }
-  });
 
   // Get solver metrics
   app.get('/metrics', (req, res) => {
@@ -248,42 +292,8 @@ function setupApiServer(solver: ShadeAgentSolver, quoteService: QuoteService, se
     }
   });
 
-  // Get swap quote
-  app.post('/quote', async (req, res) => {
-    try {
-      const quoteRequest: SwapQuoteRequest = req.body;
-      
-      // Validate request
-      if (!quoteRequest.sourceChain || !quoteRequest.destinationChain || 
-          !quoteRequest.sourceToken || !quoteRequest.destinationToken || 
-          !quoteRequest.amount) {
-        const response: ApiResponse = {
-          success: false,
-          error: 'Missing required fields: sourceChain, destinationChain, sourceToken, destinationToken, amount',
-          timestamp: new Date()
-        };
-        return res.status(400).json(response);
-      }
 
-      const quote = await quoteService.getQuote(quoteRequest);
-      const response: ApiResponse = {
-        success: true,
-        data: quote,
-        timestamp: new Date()
-      };
-      res.json(response);
-    } catch (error) {
-      logger.error('Failed to generate quote', { error, body: req.body });
-      const response: ApiResponse = {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to generate quote',
-        timestamp: new Date()
-      };
-      res.status(500).json(response);
-    }
-  });
-
-  // Create new swap
+  // Execute complete swap (unified endpoint)
   app.post('/swaps', async (req, res) => {
     try {
       const swapRequest: SwapRequest = req.body;
@@ -300,18 +310,18 @@ function setupApiServer(solver: ShadeAgentSolver, quoteService: QuoteService, se
         return res.status(400).json(response);
       }
 
-      const swap = await solver.createSwap(swapRequest);
+      const result = await solver.executeCompleteSwap(swapRequest);
       const response: ApiResponse = {
         success: true,
-        data: swap,
+        data: result,
         timestamp: new Date()
       };
       res.status(201).json(response);
     } catch (error) {
-      logger.error('Failed to create swap', { error, body: req.body });
+      logger.error('Failed to execute complete swap', { error, body: req.body });
       const response: ApiResponse = {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to create swap',
+        error: error instanceof Error ? error.message : 'Failed to execute swap',
         timestamp: new Date()
       };
       res.status(500).json(response);
@@ -369,79 +379,6 @@ function setupApiServer(solver: ShadeAgentSolver, quoteService: QuoteService, se
     }
   });
 
-  // Execute swap first leg
-  app.post('/swaps/:id/first-leg', async (req, res) => {
-    try {
-      const escrowAddress = await solver.executeSwapFirstLeg(req.params.id);
-      const response: ApiResponse = {
-        success: true,
-        data: { escrowAddress },
-        timestamp: new Date()
-      };
-      res.json(response);
-    } catch (error) {
-      logger.error('Failed to execute first leg', { error, swapId: req.params.id });
-      const response: ApiResponse = {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to execute first leg',
-        timestamp: new Date()
-      };
-      res.status(500).json(response);
-    }
-  });
-
-  // Execute swap second leg
-  app.post('/swaps/:id/second-leg', async (req, res) => {
-    try {
-      const escrowAddress = await solver.executeSwapSecondLeg(req.params.id);
-      const response: ApiResponse = {
-        success: true,
-        data: { escrowAddress },
-        timestamp: new Date()
-      };
-      res.json(response);
-    } catch (error) {
-      logger.error('Failed to execute second leg', { error, swapId: req.params.id });
-      const response: ApiResponse = {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to execute second leg',
-        timestamp: new Date()
-      };
-      res.status(500).json(response);
-    }
-  });
-
-  // Complete swap
-  app.post('/swaps/:id/complete', async (req, res) => {
-    try {
-      const { secret } = req.body;
-      if (!secret) {
-        const response: ApiResponse = {
-          success: false,
-          error: 'Secret is required',
-          timestamp: new Date()
-        };
-        return res.status(400).json(response);
-      }
-
-      const result = await solver.completeSwap(req.params.id, secret);
-      const response: ApiResponse = {
-        success: true,
-        data: result,
-        timestamp: new Date()
-      };
-      res.json(response);
-    } catch (error) {
-      logger.error('Failed to complete swap', { error, swapId: req.params.id });
-      const response: ApiResponse = {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to complete swap',
-        timestamp: new Date()
-      };
-      res.status(500).json(response);
-    }
-  });
-
   // Cancel swap
   app.post('/swaps/:id/cancel', async (req, res) => {
     try {
@@ -457,49 +394,6 @@ function setupApiServer(solver: ShadeAgentSolver, quoteService: QuoteService, se
       const response: ApiResponse = {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to cancel swap',
-        timestamp: new Date()
-      };
-      res.status(500).json(response);
-    }
-  });
-
-  // Get supported tokens for a chain
-  app.get('/chains/:chainId/tokens', (req, res) => {
-    try {
-      const tokens = quoteService.getSupportedTokens(req.params.chainId);
-      const response: ApiResponse = {
-        success: true,
-        data: tokens,
-        timestamp: new Date()
-      };
-      res.json(response);
-    } catch (error) {
-      logger.error('Failed to get supported tokens', { error, chainId: req.params.chainId });
-      const response: ApiResponse = {
-        success: false,
-        error: 'Failed to get supported tokens',
-        timestamp: new Date()
-      };
-      res.status(500).json(response);
-    }
-  });
-
-  // Get logs
-  app.get('/logs', (req, res) => {
-    try {
-      const limit = parseInt(req.query.limit as string) || 100;
-      const logs = logger.getHistory().slice(-limit);
-      const response: ApiResponse = {
-        success: true,
-        data: logs,
-        timestamp: new Date()
-      };
-      res.json(response);
-    } catch (error) {
-      logger.error('Failed to get logs', { error });
-      const response: ApiResponse = {
-        success: false,
-        error: 'Failed to get logs',
         timestamp: new Date()
       };
       res.status(500).json(response);
@@ -527,6 +421,35 @@ function setupApiServer(solver: ShadeAgentSolver, quoteService: QuoteService, se
     res.status(404).json(response);
   });
 
+  // Health check endpoint
+  app.get('/health', (req, res) => {
+    try {
+      const health = {
+        status: 'healthy',
+        timestamp: new Date(),
+        services: {
+          solver: solver.getState().isRunning,
+          websocket: io.engine.clientsCount !== undefined
+        },
+        websocket: {
+          connectedClients: io.engine.clientsCount
+        }
+      };
+      
+      res.json({
+        success: true,
+        data: health,
+        timestamp: new Date()
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: 'Health check failed',
+        timestamp: new Date()
+      });
+    }
+  });
+
   return app;
 }
 
@@ -547,46 +470,44 @@ async function main() {
 
     // Create solver instance
     const solver = new ShadeAgentSolver(
-      config,
       services.swapService,
-      services.quoteService,
-      services.evmEscrowService,
-      services.nearEscrowService,
       services.teeService,
       logger.child('Solver')
     );
 
+    // Create HTTP server for Socket.IO
+    const httpServer = createServer();
+    
+    // Setup Socket.IO server
+    const io = new SocketIOServer(httpServer, {
+      cors: {
+        origin: config.server.cors.origins,
+        credentials: true
+      }
+    });
+
     // Setup API server
-    const app = setupApiServer(solver, services.quoteService, services, config);
+    const app = setupApiServer(solver, config, io);
+    
+    // Attach Express app to HTTP server
+    httpServer.on('request', app);
 
     // Start solver
     await solver.start();
     logger.info('Solver started');
 
-    // Start HTTP server
-    const server = app.listen(config.server.port, () => {
+    // Start HTTP server with WebSocket support
+    httpServer.listen(config.server.port, () => {
       logger.info(`NearFusion Solver API server running on port ${config.server.port}`);
+      logger.info(`WebSocket server running on ws://localhost:${config.server.port}`);
       logger.info(`Health check: http://localhost:${config.server.port}/health`);
-    });
-
-    // Setup event listeners
-    solver.on('swapCreated', (swap) => {
-      logger.info('Swap created', { swapId: swap.id });
-    });
-
-    solver.on('swapCompleted', (result) => {
-      logger.info('Swap completed', { swapId: result.swapId });
-    });
-
-    solver.on('error', (error) => {
-      logger.error('Solver error', { error });
     });
 
     // Graceful shutdown
     const shutdown = async (signal: string) => {
       logger.info(`Received ${signal}, shutting down gracefully...`);
       
-      server.close(async () => {
+      httpServer.close(async () => {
         try {
           await solver.stop();
           logger.info('Graceful shutdown completed');

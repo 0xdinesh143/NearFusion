@@ -54,222 +54,45 @@ export class SwapService extends EventEmitter {
   }
 
   /**
-   * Create a new cross-chain swap
+   * Execute a complete cross-chain atomic swap in a single call
+   * This is the main function that users should call for a seamless swap experience
    */
-  async createSwap(request: SwapRequest): Promise<SwapOrder> {
+  async executeCompleteSwap(request: SwapRequest): Promise<SwapResult> {
     if (!this.isInitialized) {
       throw new Error('SwapService not initialized');
     }
 
-    this.logger.info('Creating new swap', { request });
-
-    // Validate swap request
-    this.validateSwapRequest(request);
-
-    // Generate swap order
-    const swapOrder = await this.generateSwapOrder(request);
-
-    // Store active swap
-    this.activeSwaps.set(swapOrder.id, swapOrder);
-
-    // Emit swap created event
-    this.emit('swapCreated', swapOrder);
-
-    this.logger.info('Swap created successfully', { swapId: swapOrder.id });
-    return swapOrder;
-  }
-
-  /**
-   * Execute the first leg of the atomic swap (create source escrow)
-   */
-  async executeSwapFirstLeg(swapId: string): Promise<string> {
-    const swap = this.activeSwaps.get(swapId);
-    if (!swap) {
-      throw new Error(`Swap not found: ${swapId}`);
-    }
-
-    if (swap.status !== SwapStatus.CREATED) {
-      throw new Error(`Invalid swap status for first leg: ${swap.status}`);
-    }
+    this.logger.info('Starting complete swap execution', { request });
 
     try {
-      this.logger.info('Executing swap first leg', { swapId });
+      // Step 1: Create the swap order
+      const swapOrder = await this.createSwapInternal(request);
+      const swapId = swapOrder.id;
+      const secret = swapOrder.secret!;
 
-      // Update status
-      swap.status = SwapStatus.FIRST_LEG_PENDING;
-      this.emit('swapStatusChanged', swap);
+      this.logger.info('Swap order created, proceeding with execution', { swapId });
 
-      let escrowAddress: string;
+      // Step 2: Execute first leg (source escrow)
+      const sourceEscrowAddress = await this.executeSwapFirstLegInternal(swapId);
+      this.logger.info('First leg completed', { swapId, sourceEscrowAddress });
 
-      // Create source escrow based on source chain
-      if (this.isEVMChain(swap.sourceChain)) {
-        escrowAddress = await this.evmEscrowService.createEscrow(
-          swap.sourceChain as ChainId,
-          swap.evmImmutables!,
-          'source'
-        );
-      } else {
-        escrowAddress = await this.nearEscrowService.createSrcEscrow(
-          swap.nearImmutables!
-        );
-      }
+      // Step 3: Execute second leg (destination escrow) 
+      const destinationEscrowAddress = await this.executeSwapSecondLegInternal(swapId);
+      this.logger.info('Second leg completed', { swapId, destinationEscrowAddress });
 
-      // Update swap with escrow address
-      swap.sourceEscrowAddress = escrowAddress;
-      swap.status = SwapStatus.FIRST_LEG_COMPLETED;
-      swap.updatedAt = new Date();
-
-      this.emit('swapStatusChanged', swap);
-      this.logger.info('Swap first leg completed', { swapId, escrowAddress });
-
-      return escrowAddress;
-    } catch (error) {
-      swap.status = SwapStatus.FAILED;
-      swap.error = error instanceof Error ? error.message : String(error);
-      swap.updatedAt = new Date();
+      // Step 4: Complete the swap by revealing the secret
+      const result = await this.completeSwapInternal(swapId, secret);
       
-      this.emit('swapStatusChanged', swap);
-      this.logger.error('Swap first leg failed', { swapId, error });
-      throw error;
-    }
-  }
-
-  /**
-   * Execute the second leg of the atomic swap (create destination escrow)
-   */
-  async executeSwapSecondLeg(swapId: string): Promise<string> {
-    const swap = this.activeSwaps.get(swapId);
-    if (!swap) {
-      throw new Error(`Swap not found: ${swapId}`);
-    }
-
-    if (swap.status !== SwapStatus.FIRST_LEG_COMPLETED) {
-      throw new Error(`Invalid swap status for second leg: ${swap.status}`);
-    }
-
-    try {
-      this.logger.info('Executing swap second leg', { swapId });
-
-      // Update status
-      swap.status = SwapStatus.SECOND_LEG_PENDING;
-      this.emit('swapStatusChanged', swap);
-
-      let escrowAddress: string;
-
-      // Create destination escrow based on destination chain
-      if (this.isEVMChain(swap.destinationChain)) {
-        escrowAddress = await this.evmEscrowService.createDstEscrow(
-          swap.destinationChain as ChainId,
-          swap.evmImmutables!
-        );
-      } else {
-        escrowAddress = await this.nearEscrowService.createDstEscrow(
-          swap.nearImmutables!
-        );
-      }
-
-      // Update swap with escrow address
-      swap.destinationEscrowAddress = escrowAddress;
-      swap.status = SwapStatus.SECOND_LEG_COMPLETED;
-      swap.updatedAt = new Date();
-
-      this.emit('swapStatusChanged', swap);
-      this.logger.info('Swap second leg completed', { swapId, escrowAddress });
-
-      return escrowAddress;
-    } catch (error) {
-      swap.status = SwapStatus.FAILED;
-      swap.error = error instanceof Error ? error.message : String(error);
-      swap.updatedAt = new Date();
-      
-      this.emit('swapStatusChanged', swap);
-      this.logger.error('Swap second leg failed', { swapId, error });
-      throw error;
-    }
-  }
-
-  /**
-   * Complete the atomic swap by revealing the secret
-   */
-  async completeSwap(swapId: string, secret: string): Promise<SwapResult> {
-    const swap = this.activeSwaps.get(swapId);
-    if (!swap) {
-      throw new Error(`Swap not found: ${swapId}`);
-    }
-
-    if (swap.status !== SwapStatus.SECOND_LEG_COMPLETED) {
-      throw new Error(`Invalid swap status for completion: ${swap.status}`);
-    }
-
-    try {
-      this.logger.info('Completing swap', { swapId });
-
-      // Verify secret matches hashlock
-      if (!CryptoUtils.verifySecret(secret, swap.hashlock)) {
-        throw new Error('Invalid secret provided');
-      }
-
-      // Update status
-      swap.status = SwapStatus.COMPLETING;
-      swap.secret = secret;
-      this.emit('swapStatusChanged', swap);
-
-      const result: SwapResult = {
-        swapId,
-        secret,
-        sourceTransaction: '',
-        destinationTransaction: '',
-        completedAt: new Date()
-      };
-
-      // Withdraw from destination escrow first
-      if (this.isEVMChain(swap.destinationChain)) {
-        result.destinationTransaction = await this.evmEscrowService.withdrawFunds(
-          swap.destinationChain as ChainId,
-          swap.destinationEscrowAddress!,
-          secret,
-          swap.evmImmutables!
-        );
-      } else {
-        result.destinationTransaction = await this.nearEscrowService.withdrawFunds(
-          swap.destinationEscrowAddress!,
-          secret,
-          swap.nearImmutables
-        );
-      }
-
-      // Withdraw from source escrow
-      if (this.isEVMChain(swap.sourceChain)) {
-        result.sourceTransaction = await this.evmEscrowService.withdrawFunds(
-          swap.sourceChain as ChainId,
-          swap.sourceEscrowAddress!,
-          secret,
-          swap.evmImmutables!
-        );
-      } else {
-        result.sourceTransaction = await this.nearEscrowService.withdrawFunds(
-          swap.sourceEscrowAddress!,
-          secret,
-          swap.nearImmutables
-        );
-      }
-
-      // Update swap status
-      swap.status = SwapStatus.COMPLETED;
-      swap.completedAt = new Date();
-      swap.updatedAt = new Date();
-
-      this.emit('swapCompleted', swap);
-      this.logger.info('Swap completed successfully', { swapId, result });
+      this.logger.info('Complete swap executed successfully', { 
+        swapId, 
+        sourceEscrowAddress, 
+        destinationEscrowAddress,
+        result 
+      });
 
       return result;
     } catch (error) {
-      swap.status = SwapStatus.FAILED;
-      swap.error = error instanceof Error ? error.message : String(error);
-      swap.updatedAt = new Date();
-      
-      this.emit('swapStatusChanged', swap);
-      this.logger.error('Swap completion failed', { swapId, error });
+      this.logger.error('Complete swap execution failed', { request, error });
       throw error;
     }
   }
@@ -438,6 +261,224 @@ export class SwapService extends EventEmitter {
     }
 
     return swapOrder;
+  }
+
+  private async createSwapInternal(request: SwapRequest): Promise<SwapOrder> {
+    if (!this.isInitialized) {
+      throw new Error('SwapService not initialized');
+    }
+
+    this.logger.info('Creating new swap', { request });
+
+    // Validate swap request
+    this.validateSwapRequest(request);
+
+    // Generate swap order
+    const swapOrder = await this.generateSwapOrder(request);
+
+    // Store active swap
+    this.activeSwaps.set(swapOrder.id, swapOrder);
+
+    // Emit swap created event
+    this.emit('swapCreated', swapOrder);
+
+    this.logger.info('Swap created successfully', { swapId: swapOrder.id });
+    return swapOrder;
+  }
+
+  /**
+   * Execute the first leg of the atomic swap (create source escrow)
+   */
+  private async executeSwapFirstLegInternal(swapId: string): Promise<string> {
+    const swap = this.activeSwaps.get(swapId);
+    if (!swap) {
+      throw new Error(`Swap not found: ${swapId}`);
+    }
+
+    if (swap.status !== SwapStatus.CREATED) {
+      throw new Error(`Invalid swap status for first leg: ${swap.status}`);
+    }
+
+    try {
+      this.logger.info('Executing swap first leg', { swapId });
+
+      // Update status
+      swap.status = SwapStatus.FIRST_LEG_PENDING;
+      this.emit('swapStatusChanged', swap);
+
+      let escrowAddress: string;
+
+      // Create source escrow based on source chain
+      if (this.isEVMChain(swap.sourceChain)) {
+        escrowAddress = await this.evmEscrowService.createEscrow(
+          swap.sourceChain as ChainId,
+          swap.evmImmutables!,
+          'source'
+        );
+      } else {
+        escrowAddress = await this.nearEscrowService.createSrcEscrow(
+          swap.nearImmutables!
+        );
+      }
+
+      // Update swap with escrow address
+      swap.sourceEscrowAddress = escrowAddress;
+      swap.status = SwapStatus.FIRST_LEG_COMPLETED;
+      swap.updatedAt = new Date();
+
+      this.emit('swapStatusChanged', swap);
+      this.logger.info('Swap first leg completed', { swapId, escrowAddress });
+
+      return escrowAddress;
+    } catch (error) {
+      swap.status = SwapStatus.FAILED;
+      swap.error = error instanceof Error ? error.message : String(error);
+      swap.updatedAt = new Date();
+      
+      this.emit('swapStatusChanged', swap);
+      this.logger.error('Swap first leg failed', { swapId, error });
+      throw error;
+    }
+  }
+
+  /**
+   * Execute the second leg of the atomic swap (create destination escrow)
+   */
+  private async executeSwapSecondLegInternal(swapId: string): Promise<string> {
+    const swap = this.activeSwaps.get(swapId);
+    if (!swap) {
+      throw new Error(`Swap not found: ${swapId}`);
+    }
+
+    if (swap.status !== SwapStatus.FIRST_LEG_COMPLETED) {
+      throw new Error(`Invalid swap status for second leg: ${swap.status}`);
+    }
+
+    try {
+      this.logger.info('Executing swap second leg', { swapId });
+
+      // Update status
+      swap.status = SwapStatus.SECOND_LEG_PENDING;
+      this.emit('swapStatusChanged', swap);
+
+      let escrowAddress: string;
+
+      // Create destination escrow based on destination chain
+      if (this.isEVMChain(swap.destinationChain)) {
+        escrowAddress = await this.evmEscrowService.createDstEscrow(
+          swap.destinationChain as ChainId,
+          swap.evmImmutables!
+        );
+      } else {
+        escrowAddress = await this.nearEscrowService.createDstEscrow(
+          swap.nearImmutables!
+        );
+      }
+
+      // Update swap with escrow address
+      swap.destinationEscrowAddress = escrowAddress;
+      swap.status = SwapStatus.SECOND_LEG_COMPLETED;
+      swap.updatedAt = new Date();
+
+      this.emit('swapStatusChanged', swap);
+      this.logger.info('Swap second leg completed', { swapId, escrowAddress });
+
+      return escrowAddress;
+    } catch (error) {
+      swap.status = SwapStatus.FAILED;
+      swap.error = error instanceof Error ? error.message : String(error);
+      swap.updatedAt = new Date();
+      
+      this.emit('swapStatusChanged', swap);
+      this.logger.error('Swap second leg failed', { swapId, error });
+      throw error;
+    }
+  }
+
+  /**
+   * Complete the atomic swap by revealing the secret
+   */
+  private async completeSwapInternal(swapId: string, secret: string): Promise<SwapResult> {
+    const swap = this.activeSwaps.get(swapId);
+    if (!swap) {
+      throw new Error(`Swap not found: ${swapId}`);
+    }
+
+    if (swap.status !== SwapStatus.SECOND_LEG_COMPLETED) {
+      throw new Error(`Invalid swap status for completion: ${swap.status}`);
+    }
+
+    try {
+      this.logger.info('Completing swap', { swapId });
+
+      // Verify secret matches hashlock
+      if (!CryptoUtils.verifySecret(secret, swap.hashlock)) {
+        throw new Error('Invalid secret provided');
+      }
+
+      // Update status
+      swap.status = SwapStatus.COMPLETING;
+      swap.secret = secret;
+      this.emit('swapStatusChanged', swap);
+
+      const result: SwapResult = {
+        swapId,
+        secret,
+        sourceTransaction: '',
+        destinationTransaction: '',
+        completedAt: new Date()
+      };
+
+      // Withdraw from destination escrow first
+      if (this.isEVMChain(swap.destinationChain)) {
+        result.destinationTransaction = await this.evmEscrowService.withdrawFunds(
+          swap.destinationChain as ChainId,
+          swap.destinationEscrowAddress!,
+          secret,
+          swap.evmImmutables!
+        );
+      } else {
+        result.destinationTransaction = await this.nearEscrowService.withdrawFunds(
+          swap.destinationEscrowAddress!,
+          secret,
+          swap.nearImmutables
+        );
+      }
+
+      // Withdraw from source escrow
+      if (this.isEVMChain(swap.sourceChain)) {
+        result.sourceTransaction = await this.evmEscrowService.withdrawFunds(
+          swap.sourceChain as ChainId,
+          swap.sourceEscrowAddress!,
+          secret,
+          swap.evmImmutables!
+        );
+      } else {
+        result.sourceTransaction = await this.nearEscrowService.withdrawFunds(
+          swap.sourceEscrowAddress!,
+          secret,
+          swap.nearImmutables
+        );
+      }
+
+      // Update swap status
+      swap.status = SwapStatus.COMPLETED;
+      swap.completedAt = new Date();
+      swap.updatedAt = new Date();
+
+      this.emit('swapCompleted', swap);
+      this.logger.info('Swap completed successfully', { swapId, result });
+
+      return result;
+    } catch (error) {
+      swap.status = SwapStatus.FAILED;
+      swap.error = error instanceof Error ? error.message : String(error);
+      swap.updatedAt = new Date();
+      
+      this.emit('swapStatusChanged', swap);
+      this.logger.error('Swap completion failed', { swapId, error });
+      throw error;
+    }
   }
 
   private isEVMChain(chain: string): boolean {

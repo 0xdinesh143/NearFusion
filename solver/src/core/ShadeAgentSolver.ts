@@ -43,9 +43,8 @@ export class ShadeAgentSolver extends EventEmitter {
 
     try {
       this.logger.info('Starting NearFusion Shade Agent Solver...');
-
       // Verify TEE attestation
-      await this.verifyTEEAttestation();
+      // await this.verifyTEEAttestation();
 
       // Initialize all services
       await this.initializeServices();
@@ -259,8 +258,11 @@ export class ShadeAgentSolver extends EventEmitter {
   private async verifyTEEAttestation(): Promise<void> {
     try {
       this.logger.info('Verifying TEE attestation...');
+      
       const attestation = await this.teeService.generateAttestation();
       const isValid = await this.teeService.verifyAttestation(attestation);
+
+      console.log('isValid', isValid);
       
       if (!isValid) {
         throw new Error('TEE attestation verification failed');

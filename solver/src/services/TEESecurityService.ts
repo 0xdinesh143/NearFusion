@@ -32,6 +32,7 @@ export class TEESecurityService extends EventEmitter {
   ) {
     super();
   }
+  
 
   /**
    * Initialize the TEE security service

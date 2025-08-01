@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { Near, Account, Contract, connect, keyStores, KeyPair } from 'near-api-js';
+import { Near, Account, Contract, keyStores, KeyPair, providers, InMemorySigner } from 'near-api-js';
 import { 
   NearEscrowImmutables, 
   TokenBalance,
@@ -66,11 +66,7 @@ export class NearEscrowService extends EventEmitter {
    */
   async initialize(): Promise<void> {
     try {
-      this.logger.info('Initializing NearEscrowService for testnet...', {
-        networkId: this.networkId,
-        accountId: this.accountId,
-        factoryContractId: this.factoryContractId
-      });
+      this.logger.info('Initializing NearEscrowService for testnet...');
       
       // Connect to NEAR
       await this.connectToNear();
@@ -390,7 +386,13 @@ export class NearEscrowService extends EventEmitter {
         helperUrl: `https://helper.${this.networkId}.near.org`,
       };
 
-      this.near = await connect(config);
+      // Create Near instance directly without using deprecated connect function
+      this.near = new Near({
+        ...config,
+        provider: new providers.JsonRpcProvider({ url: this.rpcUrl }),
+        signer: new InMemorySigner(keyStore)
+      });
+      
       this.logger.debug('Connected to NEAR network');
       
     } catch (error) {

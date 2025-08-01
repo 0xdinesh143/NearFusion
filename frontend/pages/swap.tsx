@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ArrowUpDown } from "lucide-react";
+import { ArrowUpDown, Loader, AlertCircle, CheckCircle, Clock } from "lucide-react";
 import Link from "next/link";
 import { Geist_Mono } from "next/font/google";
 import Image from "next/image";
@@ -12,6 +12,16 @@ import { setupHereWallet } from "@near-wallet-selector/here-wallet";
 import { setupMyNearWallet } from "@near-wallet-selector/my-near-wallet";
 import { useAppKit } from "@reown/appkit/react";
 import { useAccount } from "wagmi";
+import { 
+  solverService, 
+  SwapOrder, 
+  SwapStatus, 
+  SwapRequest, 
+  SwapUpdateEvent, 
+  SwapCompletedEvent, 
+  SwapCancelledEvent, 
+  SolverErrorEvent 
+} from "../lib/solverService";
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
@@ -30,15 +40,21 @@ interface TokenPrices {
 }
 
 export default function SwapPage() {
-  const { open, close } = useAppKit();
-  const { isConnected: isETHConnected } = useAccount();
+  const { open } = useAppKit();
+  const { isConnected: isETHConnected, address: ethAddress } = useAccount();
   const [isNEARConnected, setIsNEARConnected] = useState(false);
+  const [nearAddress, setNearAddress] = useState<string>("");
 
   const [fromAmount, setFromAmount] = useState("");
   const [toAmount, setToAmount] = useState("");
   const [fromToken, setFromToken] = useState("ETH");
   const [toToken, setToToken] = useState("NEAR");
   const [tokenPrices, setTokenPrices] = useState<TokenPrices>({ ETH: 0, NEAR: 0 });
+
+  // Swap execution state
+  const [isSwapping, setIsSwapping] = useState(false);
+  const [swapError, setSwapError] = useState<string | null>(null);
+  const [currentSwap, setCurrentSwap] = useState<SwapOrder | null>(null);
 
   // Fetch token prices from our API route
   const fetchTokenPrices = async () => {
@@ -62,13 +78,46 @@ export default function SwapPage() {
     } 
   };
 
-  // Fetch prices on component mount
+  // Fetch prices on component mount and setup WebSocket
   useEffect(() => {
     fetchTokenPrices();
     // Refresh prices every 30 seconds
     const interval = setInterval(fetchTokenPrices, 30000);
-    return () => clearInterval(interval);
-  }, []);
+
+    // Setup WebSocket for real-time swap updates
+    solverService.connectWebSocket({
+      onSwapUpdate: (event: SwapUpdateEvent) => {
+        console.log('Swap update:', event);
+        if (currentSwap && event.swapId === currentSwap.id) {
+          setCurrentSwap(event.data as SwapOrder);
+        }
+      },
+      onSwapCompleted: (event: SwapCompletedEvent) => {
+        console.log('Swap completed:', event);
+        if (currentSwap && event.data.swapId === currentSwap.id) {
+          setCurrentSwap((prev) => prev ? { ...prev, status: SwapStatus.COMPLETED } : null);
+          setIsSwapping(false);
+        }
+      },
+      onSwapCancelled: (event: SwapCancelledEvent) => {
+        console.log('Swap cancelled:', event);
+        if (currentSwap && event.data.swapId === currentSwap.id) {
+          setCurrentSwap((prev) => prev ? { ...prev, status: SwapStatus.CANCELLED } : null);
+          setIsSwapping(false);
+        }
+      },
+      onError: (error: SolverErrorEvent) => {
+        console.error('Solver error:', error);
+        setSwapError(error.error || 'Unknown error occurred');
+        setIsSwapping(false);
+      }
+    });
+
+    return () => {
+      clearInterval(interval);
+      solverService.disconnectWebSocket();
+    };
+  }, [currentSwap]);
 
   const handleFromAmountChange = (value: string) => {
     setFromAmount(value);
@@ -117,12 +166,84 @@ export default function SwapPage() {
     const modal = setupModal(selector, {
       contractId: "test.testnet",
     });
+
+    // Listen for wallet selection
+    selector.on("signedIn", (data) => {
+      setIsNEARConnected(true);
+      if (data.accounts && data.accounts.length > 0) {
+        setNearAddress(data.accounts[0].accountId);
+      }
+    });
+
     modal.show();
-    setIsNEARConnected(true);
   }
 
   async function handleETHConnectWallet() {
     open();
+  }
+
+  // Execute swap with backend
+  async function handleSwapExecution() {
+    if (!fromAmount || !toAmount || !ethAddress || !nearAddress) {
+      setSwapError("Missing required information for swap");
+      return;
+    }
+
+    setIsSwapping(true);
+    setSwapError(null);
+
+    try {
+      // Map token symbols to chain addresses  
+      const sourceChain = fromToken === "ETH" ? "base-sepolia" : "near";
+      const destinationChain = toToken === "ETH" ? "base-sepolia" : "near";
+      
+      // For demo, using simplified token addresses - in production these would be actual contract addresses
+      const sourceTokenAddress = fromToken === "ETH" ? "0x0000000000000000000000000000000000000000" : "wrap.testnet";
+      const destinationTokenAddress = toToken === "ETH" ? "0x0000000000000000000000000000000000000000" : "wrap.testnet";
+
+      const swapRequest: SwapRequest = {
+        sourceChain,
+        destinationChain,
+        sourceToken: sourceTokenAddress,
+        destinationToken: destinationTokenAddress,
+        amount: fromAmount,
+        destinationAmount: toAmount,
+        userAddress: fromToken === "ETH" ? ethAddress : nearAddress,
+        recipientAddress: toToken === "ETH" ? ethAddress : nearAddress,
+        slippageTolerance: 1.0 // 1% tolerance
+      };
+
+      console.log('Executing swap:', swapRequest);
+
+      const result = await solverService.executeSwap(swapRequest);
+      console.log('Swap result:', result);
+
+      // Get the swap details
+      const swapOrder = await solverService.getSwapStatus(result.swapId);
+      setCurrentSwap(swapOrder);
+
+      // Subscribe to updates for this swap
+      solverService.subscribeToSwap(result.swapId);
+
+    } catch (error) {
+      console.error('Swap execution failed:', error);
+      setSwapError(error instanceof Error ? error.message : 'Swap execution failed');
+      setIsSwapping(false);
+    }
+  }
+
+  // Cancel current swap
+  async function handleCancelSwap() {
+    if (!currentSwap) return;
+
+    try {
+      await solverService.cancelSwap(currentSwap.id);
+      setCurrentSwap(null);
+      setIsSwapping(false);
+    } catch (error) {
+      console.error('Failed to cancel swap:', error);
+      setSwapError(error instanceof Error ? error.message : 'Failed to cancel swap');
+    }
   }
 
   const getTokenIcon = (token: string) => {
@@ -144,6 +265,34 @@ export default function SwapPage() {
 
   const formatUSDValue = (value: number) => {
     return value > 0 ? `$${Number(value).toFixed(2)}` : '$0.00';
+  };
+
+  // Get swap status display info
+  const getSwapStatusInfo = (status: SwapStatus) => {
+    switch (status) {
+      case SwapStatus.CREATED:
+        return { text: "Created", icon: Clock, color: "text-blue-400" };
+      case SwapStatus.FIRST_LEG_PENDING:
+        return { text: "First leg pending", icon: Loader, color: "text-yellow-400" };
+      case SwapStatus.FIRST_LEG_COMPLETED:
+        return { text: "First leg completed", icon: CheckCircle, color: "text-green-400" };
+      case SwapStatus.SECOND_LEG_PENDING:
+        return { text: "Second leg pending", icon: Loader, color: "text-yellow-400" };
+      case SwapStatus.SECOND_LEG_COMPLETED:
+        return { text: "Second leg completed", icon: CheckCircle, color: "text-green-400" };
+      case SwapStatus.COMPLETING:
+        return { text: "Completing", icon: Loader, color: "text-blue-400" };
+      case SwapStatus.COMPLETED:
+        return { text: "Completed", icon: CheckCircle, color: "text-green-400" };
+      case SwapStatus.CANCELLING:
+        return { text: "Cancelling", icon: Loader, color: "text-orange-400" };
+      case SwapStatus.CANCELLED:
+        return { text: "Cancelled", icon: AlertCircle, color: "text-orange-400" };
+      case SwapStatus.FAILED:
+        return { text: "Failed", icon: AlertCircle, color: "text-red-400" };
+      default:
+        return { text: "Unknown", icon: AlertCircle, color: "text-gray-400" };
+    }
   };
 
   return (
@@ -283,10 +432,90 @@ export default function SwapPage() {
           )}
         </div>
 
+        {/* Error Message */}
+        {swapError && (
+          <div className="bg-red-900/50 border border-red-500 rounded-xl p-4 mt-4 flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
+            <div className="text-red-300 text-sm">{swapError}</div>
+            <button
+              onClick={() => setSwapError(null)}
+              className="ml-auto text-red-400 hover:text-red-300"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Current Swap Status */}
+        {currentSwap && (
+          <div className="bg-gray-800 rounded-xl p-4 mt-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-semibold">Current Swap</h3>
+              {currentSwap.status !== SwapStatus.COMPLETED && 
+               currentSwap.status !== SwapStatus.CANCELLED && 
+               currentSwap.status !== SwapStatus.FAILED && (
+                <button
+                  onClick={handleCancelSwap}
+                  className="text-red-400 hover:text-red-300 text-sm"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+            
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-400">Swap ID:</span>
+                <span className="font-mono text-xs">{currentSwap.id.slice(0, 8)}...</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Amount:</span>
+                <span>{currentSwap.amount} {fromToken} → {currentSwap.destinationAmount} {toToken}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400">Status:</span>
+                <div className="flex items-center gap-2">
+                  {(() => {
+                    const statusInfo = getSwapStatusInfo(currentSwap.status);
+                    const IconComponent = statusInfo.icon;
+                    return (
+                      <>
+                        <IconComponent className={`w-4 h-4 ${statusInfo.color} ${statusInfo.icon === Loader ? 'animate-spin' : ''}`} />
+                        <span className={statusInfo.color}>{statusInfo.text}</span>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+              {currentSwap.error && (
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Error:</span>
+                  <span className="text-red-400 text-xs">{currentSwap.error}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Swap Button */}
         {isETHConnected && isNEARConnected ? (
-          <button className="w-full mt-6 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-4 rounded-xl transition-all cursor-pointer">
-            {" "}
-            Swap{" "}
+          <button 
+            onClick={handleSwapExecution}
+            disabled={isSwapping || !fromAmount || !toAmount}
+            className={`w-full mt-6 font-semibold py-4 rounded-xl transition-all flex items-center justify-center gap-2 ${
+              isSwapping || !fromAmount || !toAmount
+                ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                : 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
+            }`}
+          >
+            {isSwapping ? (
+              <>
+                <Loader className="w-5 h-5 animate-spin" />
+                Swapping...
+              </>
+            ) : (
+              'Swap'
+            )}
           </button>
         ) : isETHConnected ? (
           <button

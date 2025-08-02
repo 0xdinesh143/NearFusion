@@ -5,7 +5,7 @@ import { ArrowUpDown, Loader, AlertCircle, CheckCircle, Clock } from "lucide-rea
 import Link from "next/link";
 import { Geist_Mono } from "next/font/google";
 import Image from "next/image";
-import { setupWalletSelector } from "@near-wallet-selector/core";
+import { setupWalletSelector, WalletSelector } from "@near-wallet-selector/core";
 import { setupModal } from "@near-wallet-selector/modal-ui";
 import { setupMeteorWallet } from "@near-wallet-selector/meteor-wallet";
 import { setupHereWallet } from "@near-wallet-selector/here-wallet";
@@ -44,6 +44,7 @@ export default function SwapPage() {
   const { isConnected: isETHConnected, address: ethAddress } = useAccount();
   const [isNEARConnected, setIsNEARConnected] = useState(false);
   const [nearAddress, setNearAddress] = useState<string>("");
+  const [nearSelector, setNearSelector] = useState<WalletSelector | null>(null);
 
   const [fromAmount, setFromAmount] = useState("");
   const [toAmount, setToAmount] = useState("");
@@ -77,6 +78,49 @@ export default function SwapPage() {
       setTokenPrices({ ETH: 0, NEAR: 0 });
     } 
   };
+
+  // Initialize NEAR wallet selector and check for existing connections
+  useEffect(() => {
+    const initializeNearWallet = async () => {
+      try {
+        const selector = await setupWalletSelector({
+          network: "testnet",
+          modules: [setupMeteorWallet(), setupHereWallet(), setupMyNearWallet()],
+        });
+        
+        setNearSelector(selector);
+
+        // Check if wallet is already connected
+        const wallet = await selector.wallet();
+        if (wallet) {
+          const accounts = await wallet.getAccounts();
+          if (accounts && accounts.length > 0) {
+            setIsNEARConnected(true);
+            setNearAddress(accounts[0].accountId);
+          }
+        }
+
+        // Listen for wallet connection events
+        selector.on("signedIn", (data) => {
+          setIsNEARConnected(true);
+          if (data.accounts && data.accounts.length > 0) {
+            setNearAddress(data.accounts[0].accountId);
+          }
+        });
+
+        selector.on("signedOut", () => {
+          console.log("NEAR wallet disconnected");
+          setIsNEARConnected(false);
+          setNearAddress("");
+        });
+
+      } catch (error) {
+        console.error("Failed to initialize NEAR wallet:", error);
+      }
+    };
+
+    initializeNearWallet();
+  }, []);
 
   // Fetch prices on component mount and setup WebSocket
   useEffect(() => {
@@ -158,21 +202,13 @@ export default function SwapPage() {
   };
 
   async function handleNearConnectWallet() {
-    const selector = await setupWalletSelector({
-      network: "testnet",
-      modules: [setupMeteorWallet(), setupHereWallet(), setupMyNearWallet()],
-    });
+    if (!nearSelector) {
+      console.error("NEAR selector not initialized");
+      return;
+    }
 
-    const modal = setupModal(selector, {
+    const modal = setupModal(nearSelector, {
       contractId: "test.testnet",
-    });
-
-    // Listen for wallet selection
-    selector.on("signedIn", (data) => {
-      setIsNEARConnected(true);
-      if (data.accounts && data.accounts.length > 0) {
-        setNearAddress(data.accounts[0].accountId);
-      }
     });
 
     modal.show();

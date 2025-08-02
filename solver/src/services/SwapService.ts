@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { Logger } from '../utils/Logger';
+
 import { CryptoUtils } from '../utils/CryptoUtils';
 import { EVMEscrowService } from './EVMEscrowService';
 import { NearEscrowService } from './NearEscrowService';
@@ -31,24 +31,23 @@ export class SwapService extends EventEmitter {
   constructor(
     private config: SwapServiceConfig,
     private evmEscrowService: EVMEscrowService,
-    private nearEscrowService: NearEscrowService,
-    private logger: Logger
+    private nearEscrowService: NearEscrowService
   ) {
     super();
   }
 
   async initialize(): Promise<void> {
     try {
-      this.logger.info('Initializing SwapService...');
+      console.log('Initializing SwapService...');
       
       // Initialize dependent services
       await this.evmEscrowService.initialize();
       await this.nearEscrowService.initialize();
       
       this.isInitialized = true;
-      this.logger.info('SwapService initialized successfully');
+      console.log('SwapService initialized successfully');
     } catch (error) {
-      this.logger.error('Failed to initialize SwapService', { error });
+      console.error('Failed to initialize SwapService:', error);
       throw error;
     }
   }
@@ -62,7 +61,7 @@ export class SwapService extends EventEmitter {
       throw new Error('SwapService not initialized');
     }
 
-    this.logger.info('Starting complete swap execution', { request });
+    console.log('Starting complete swap execution');
 
     try {
       // Step 1: Create the swap order
@@ -70,29 +69,24 @@ export class SwapService extends EventEmitter {
       const swapId = swapOrder.id;
       const secret = swapOrder.secret!;
 
-      this.logger.info('Swap order created, proceeding with execution', { swapId });
+      console.log(`Swap order created, proceeding with execution: ${swapId}`);
 
       // Step 2: Execute first leg (source escrow)
       const sourceEscrowAddress = await this.executeSwapFirstLegInternal(swapId);
-      this.logger.info('First leg completed', { swapId, sourceEscrowAddress });
+      console.log(`First leg completed for swap ${swapId}: ${sourceEscrowAddress}`);
 
       // Step 3: Execute second leg (destination escrow) 
       const destinationEscrowAddress = await this.executeSwapSecondLegInternal(swapId);
-      this.logger.info('Second leg completed', { swapId, destinationEscrowAddress });
+      console.log(`Second leg completed for swap ${swapId}: ${destinationEscrowAddress}`);
 
       // Step 4: Complete the swap by revealing the secret
       const result = await this.completeSwapInternal(swapId, secret);
       
-      this.logger.info('Complete swap executed successfully', { 
-        swapId, 
-        sourceEscrowAddress, 
-        destinationEscrowAddress,
-        result 
-      });
+      console.log(`Complete swap executed successfully: ${swapId}`);
 
       return result;
     } catch (error) {
-      this.logger.error('Complete swap execution failed', { request, error });
+      console.error('Complete swap execution failed:', error);
       throw error;
     }
   }
@@ -111,7 +105,7 @@ export class SwapService extends EventEmitter {
     }
 
     try {
-      this.logger.info('Cancelling swap', { swapId });
+      console.log(`Cancelling swap: ${swapId}`);
 
       swap.status = SwapStatus.CANCELLING;
       this.emit('swapStatusChanged', swap);
@@ -145,14 +139,14 @@ export class SwapService extends EventEmitter {
       swap.updatedAt = new Date();
 
       this.emit('swapCancelled', swap);
-      this.logger.info('Swap cancelled successfully', { swapId });
+      console.log(`Swap cancelled successfully: ${swapId}`);
     } catch (error) {
       swap.status = SwapStatus.FAILED;
       swap.error = error instanceof Error ? error.message : String(error);
       swap.updatedAt = new Date();
       
       this.emit('swapStatusChanged', swap);
-      this.logger.error('Swap cancellation failed', { swapId, error });
+      console.error(`Swap cancellation failed for ${swapId}:`, error);
       throw error;
     }
   }
@@ -192,12 +186,12 @@ export class SwapService extends EventEmitter {
     }
 
     const amount = parseFloat(request.amount);
-    const minAmount = parseFloat(this.config.minSwapAmount);
-    const maxAmount = parseFloat(this.config.maxSwapAmount);
+    // const minAmount = parseFloat(this.config.minSwapAmount);
+    // const maxAmount = parseFloat(this.config.maxSwapAmount);
 
-    if (amount < minAmount || amount > maxAmount) {
-      throw new Error(`Swap amount must be between ${minAmount} and ${maxAmount}`);
-    }
+    // if (amount < minAmount || amount > maxAmount) {
+    //   throw new Error(`Swap amount must be between ${minAmount} and ${maxAmount}`);
+    // }
   }
 
   private async generateSwapOrder(request: SwapRequest): Promise<SwapOrder> {
@@ -268,7 +262,7 @@ export class SwapService extends EventEmitter {
       throw new Error('SwapService not initialized');
     }
 
-    this.logger.info('Creating new swap', { request });
+    console.log('Creating new swap');
 
     // Validate swap request
     this.validateSwapRequest(request);
@@ -282,7 +276,7 @@ export class SwapService extends EventEmitter {
     // Emit swap created event
     this.emit('swapCreated', swapOrder);
 
-    this.logger.info('Swap created successfully', { swapId: swapOrder.id });
+    console.log(`Swap created successfully: ${swapOrder.id}`);
     return swapOrder;
   }
 
@@ -300,7 +294,7 @@ export class SwapService extends EventEmitter {
     }
 
     try {
-      this.logger.info('Executing swap first leg', { swapId });
+      console.log(`Executing swap first leg: ${swapId}`);
 
       // Update status
       swap.status = SwapStatus.FIRST_LEG_PENDING;
@@ -327,7 +321,7 @@ export class SwapService extends EventEmitter {
       swap.updatedAt = new Date();
 
       this.emit('swapStatusChanged', swap);
-      this.logger.info('Swap first leg completed', { swapId, escrowAddress });
+      console.log(`Swap first leg completed for ${swapId}: ${escrowAddress}`);
 
       return escrowAddress;
     } catch (error) {
@@ -336,7 +330,7 @@ export class SwapService extends EventEmitter {
       swap.updatedAt = new Date();
       
       this.emit('swapStatusChanged', swap);
-      this.logger.error('Swap first leg failed', { swapId, error });
+      console.error(`Swap first leg failed for ${swapId}:`, error);
       throw error;
     }
   }
@@ -355,7 +349,7 @@ export class SwapService extends EventEmitter {
     }
 
     try {
-      this.logger.info('Executing swap second leg', { swapId });
+      console.log(`Executing swap second leg: ${swapId}`);
 
       // Update status
       swap.status = SwapStatus.SECOND_LEG_PENDING;
@@ -381,7 +375,7 @@ export class SwapService extends EventEmitter {
       swap.updatedAt = new Date();
 
       this.emit('swapStatusChanged', swap);
-      this.logger.info('Swap second leg completed', { swapId, escrowAddress });
+      console.log(`Swap second leg completed for ${swapId}: ${escrowAddress}`);
 
       return escrowAddress;
     } catch (error) {
@@ -390,7 +384,7 @@ export class SwapService extends EventEmitter {
       swap.updatedAt = new Date();
       
       this.emit('swapStatusChanged', swap);
-      this.logger.error('Swap second leg failed', { swapId, error });
+      console.error(`Swap second leg failed for ${swapId}:`, error);
       throw error;
     }
   }
@@ -409,7 +403,7 @@ export class SwapService extends EventEmitter {
     }
 
     try {
-      this.logger.info('Completing swap', { swapId });
+      console.log(`Completing swap: ${swapId}`);
 
       // Verify secret matches hashlock
       if (!CryptoUtils.verifySecret(secret, swap.hashlock)) {
@@ -467,7 +461,7 @@ export class SwapService extends EventEmitter {
       swap.updatedAt = new Date();
 
       this.emit('swapCompleted', swap);
-      this.logger.info('Swap completed successfully', { swapId, result });
+      console.log(`Swap completed successfully: ${swapId}`);
 
       return result;
     } catch (error) {
@@ -476,7 +470,7 @@ export class SwapService extends EventEmitter {
       swap.updatedAt = new Date();
       
       this.emit('swapStatusChanged', swap);
-      this.logger.error('Swap completion failed', { swapId, error });
+      console.error(`Swap completion failed for ${swapId}:`, error);
       throw error;
     }
   }
@@ -494,7 +488,7 @@ export class SwapService extends EventEmitter {
       
       return evmHealth && nearHealth;
     } catch (error) {
-      this.logger.error('SwapService health check failed', { error });
+      console.error('SwapService health check failed:', error);
       return false;
     }
   }

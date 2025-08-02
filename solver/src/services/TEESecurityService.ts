@@ -4,7 +4,7 @@ import {
   TEEAttestation, 
   SolverError 
 } from '../types';
-import { Logger } from '../utils/Logger';
+
 import { CryptoUtils } from '../utils/CryptoUtils';
 
 export interface TEEConfig {
@@ -27,8 +27,7 @@ export class TEESecurityService extends EventEmitter {
   private secureKeystore: Map<string, string> = new Map();
   
   constructor(
-    private config: TEEConfig,
-    private logger: Logger
+    private config: TEEConfig
   ) {
     super();
   }
@@ -39,24 +38,24 @@ export class TEESecurityService extends EventEmitter {
    */
   async initialize(): Promise<void> {
     try {
-      this.logger.info('Initializing TEESecurityService...');
+      console.log('Initializing TEESecurityService...');
       
       if (this.config.environment === 'production') {
         await this.initializeAttestationClient();
         await this.verifyTEEEnvironment();
       } else {
-        this.logger.warn('TEE attestation disabled - running in development mode');
+        console.log('TEE attestation disabled - running in development mode');
       }
       
       // Initialize secure keystore
       await this.initializeSecureKeystore();
       
       this.isInitialized = true;
-      this.logger.info('TEESecurityService initialized successfully');
+      console.log('TEESecurityService initialized successfully');
       
       this.emit('initialized');
     } catch (error) {
-      this.logger.error('Failed to initialize TEESecurityService', { error });
+      console.error('Failed to initialize TEESecurityService:', error);
       throw error;
     }
   }
@@ -70,7 +69,7 @@ export class TEESecurityService extends EventEmitter {
     }
 
     try {
-      this.logger.debug('Generating TEE attestation...');
+      console.log('Generating TEE attestation...');
       
       if (this.config.environment === 'development') {
         // Mock attestation for development
@@ -83,7 +82,7 @@ export class TEESecurityService extends EventEmitter {
       }
       
     } catch (error) {
-      this.logger.error('Failed to generate attestation', { error });
+      console.error('Failed to generate attestation:', error);
       throw error;
     }
   }
@@ -93,12 +92,12 @@ export class TEESecurityService extends EventEmitter {
    */
   async verifyAttestation(attestation: TEEAttestation): Promise<boolean> {
     try {
-      this.logger.debug('Verifying TEE attestation...');
+      console.log('Verifying TEE attestation...');
       
       // Check attestation age (should be recent)
       const attestationAge = Date.now() - attestation.timestamp.getTime();
       if (attestationAge > 5 * 60 * 1000) { // 5 minutes
-        this.logger.warn('Attestation is too old', { age: attestationAge });
+        console.log(`Attestation is too old: ${attestationAge}`);
         return false;
       }
       
@@ -111,7 +110,7 @@ export class TEESecurityService extends EventEmitter {
       }
       
     } catch (error) {
-      this.logger.error('Failed to verify attestation', { error });
+      console.error('Failed to verify attestation:', error);
       return false;
     }
   }
@@ -130,9 +129,9 @@ export class TEESecurityService extends EventEmitter {
       const encryptedSecret = await this.encryptSecret(secret);
       this.secureKeystore.set(key, encryptedSecret);
       
-      this.logger.debug('Secret stored securely', { key });
+      console.log(`Secret stored securely: ${key}`);
     } catch (error) {
-      this.logger.error('Failed to store secret', { error, key });
+      console.error(`Failed to store secret ${key}:`, error);
       throw error;
     }
   }
@@ -152,10 +151,10 @@ export class TEESecurityService extends EventEmitter {
       }
       
       const secret = await this.decryptSecret(encryptedSecret);
-      this.logger.debug('Secret retrieved securely', { key });
+              console.log(`Secret retrieved securely: ${key}`);
       return secret;
     } catch (error) {
-      this.logger.error('Failed to retrieve secret', { error, key });
+      console.error(`Failed to retrieve secret ${key}:`, error);
       return null;
     }
   }
@@ -173,10 +172,10 @@ export class TEESecurityService extends EventEmitter {
       // For development, we use a simulated signing process
       const signature = CryptoUtils.keccak256(data + 'TEE_SIGNATURE_SALT');
       
-      this.logger.debug('Data signed with TEE key', { dataHash: CryptoUtils.keccak256(data) });
+      console.log('Data signed with TEE key');
       return signature;
     } catch (error) {
-      this.logger.error('Failed to sign data', { error });
+      console.error('Failed to sign data:', error);
       throw error;
     }
   }
@@ -190,7 +189,7 @@ export class TEESecurityService extends EventEmitter {
     }
 
     try {
-      this.logger.debug('Executing secure computation in TEE...');
+      console.log('Executing secure computation in TEE...');
       
       // In production, this would run in actual TEE
       // For development, we simulate secure execution
@@ -198,10 +197,10 @@ export class TEESecurityService extends EventEmitter {
       const result = await computation();
       const executionTime = Date.now() - startTime;
       
-      this.logger.debug('Secure computation completed', { executionTime });
+      console.log(`Secure computation completed in ${executionTime}ms`);
       return result;
     } catch (error) {
-      this.logger.error('Secure computation failed', { error });
+      console.error('Secure computation failed:', error);
       throw error;
     }
   }
@@ -219,7 +218,7 @@ export class TEESecurityService extends EventEmitter {
       
       return isValid;
     } catch (error) {
-      this.logger.error('TEE health check failed', { error });
+      console.error('TEE health check failed:', error);
       return false;
     }
   }
@@ -228,7 +227,7 @@ export class TEESecurityService extends EventEmitter {
    * Initialize attestation client for Phala Cloud
    */
   private async initializeAttestationClient(): Promise<void> {
-    this.logger.debug('Initializing attestation client...');
+    console.log('Initializing attestation client...');
     
     this.apiClient = axios.create({
       baseURL: this.config.attestationUrl,
@@ -242,9 +241,9 @@ export class TEESecurityService extends EventEmitter {
     // Test connection
     try {
       await this.apiClient.get('/health');
-      this.logger.debug('Attestation client connected successfully');
+      console.log('Attestation client connected successfully');
     } catch (error) {
-      this.logger.warn('Attestation service not reachable', { error });
+      console.log('Attestation service not reachable');
     }
   }
 
@@ -252,14 +251,14 @@ export class TEESecurityService extends EventEmitter {
    * Verify TEE environment
    */
   private async verifyTEEEnvironment(): Promise<void> {
-    this.logger.debug('Verifying TEE environment...');
+    console.log('Verifying TEE environment...');
     
     // In production, this would check for actual TEE hardware
     // For now, we simulate the check
     if (this.config.environment === 'production') {
       // Check for TEE hardware presence
       // This would involve checking processor features, secure boot, etc.
-      this.logger.warn('Production TEE verification not implemented - requires actual TEE hardware');
+      console.log('Production TEE verification not implemented - requires actual TEE hardware');
     }
   }
 
@@ -267,13 +266,13 @@ export class TEESecurityService extends EventEmitter {
    * Initialize secure keystore
    */
   private async initializeSecureKeystore(): Promise<void> {
-    this.logger.debug('Initializing secure keystore...');
+    console.log('Initializing secure keystore...');
     
     // In production, this would use hardware-secured storage
     // For development, we use in-memory simulation
     this.secureKeystore.clear();
     
-    this.logger.debug('Secure keystore initialized');
+    console.log('Secure keystore initialized');
   }
 
   /**
@@ -313,7 +312,7 @@ export class TEESecurityService extends EventEmitter {
       const expectedSignature = CryptoUtils.keccak256(attestation.attestationData + attestation.publicKey);
       return expectedSignature === attestation.signature;
     } catch (error) {
-      this.logger.debug('Mock attestation verification failed', { error });
+              console.log('Mock attestation verification failed');
       return false;
     }
   }
@@ -335,7 +334,7 @@ export class TEESecurityService extends EventEmitter {
 
       return response.data.valid === true;
     } catch (error) {
-      this.logger.error('Production attestation verification failed', { error });
+              console.error('Production attestation verification failed:', error);
       return false;
     }
   }

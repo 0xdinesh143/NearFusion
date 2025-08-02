@@ -7,7 +7,7 @@ import {
   SolverErrorCode,
   ChainId
 } from '../types';
-import { Logger } from '../utils/Logger';
+
 
 // NEAR contract method signatures
 const FACTORY_VIEW_METHODS = [
@@ -55,8 +55,7 @@ export class NearEscrowService extends EventEmitter {
     private accountId: string,
     private privateKey: string,
     private rpcUrl: string,
-    private factoryContractId: string,
-    private logger: Logger
+    private factoryContractId: string
   ) {
     super();
   }
@@ -66,7 +65,7 @@ export class NearEscrowService extends EventEmitter {
    */
   async initialize(): Promise<void> {
     try {
-      this.logger.info('Initializing NearEscrowService for testnet...');
+      console.log('Initializing NearEscrowService for testnet...');
       
       // Connect to NEAR
       await this.connectToNear();
@@ -77,10 +76,10 @@ export class NearEscrowService extends EventEmitter {
       // Initialize factory contract
       await this.initializeFactoryContract();
       
-      this.logger.info('NearEscrowService initialized successfully');
+      console.log('NearEscrowService initialized successfully');
       
     } catch (error) {
-      this.logger.error('Failed to initialize NearEscrowService', { error });
+      console.error('Failed to initialize NearEscrowService:', error);
       throw error;
     }
   }
@@ -90,7 +89,7 @@ export class NearEscrowService extends EventEmitter {
    */
   async createSrcEscrow(immutables: NearEscrowImmutables, escrowType: 'Source' | 'Destination' = 'Source'): Promise<string> {
     try {
-      this.logger.info('Creating NEAR source escrow', { escrowType });
+      console.log(`Creating NEAR source escrow: ${escrowType}`);
 
       if (!this.factoryContract) {
         throw new SolverError('Factory contract not initialized', SolverErrorCode.CONTRACT_ERROR);
@@ -127,7 +126,7 @@ export class NearEscrowService extends EventEmitter {
       // Initialize escrow contract instance
       await this.initializeEscrowContract(escrowAccountId);
       
-      this.logger.info('NEAR source escrow created', { escrowAccountId, escrowType });
+      console.log(`NEAR source escrow created (${escrowType}): ${escrowAccountId}`);
       this.emit('escrowCreated', { 
         chain: 'near',
         address: escrowAccountId, 
@@ -137,7 +136,7 @@ export class NearEscrowService extends EventEmitter {
       return escrowAccountId;
       
     } catch (error) {
-      this.logger.error('Failed to create NEAR source escrow', { error });
+      console.error('Failed to create NEAR source escrow:', error);
       throw new SolverError('Failed to create NEAR source escrow', SolverErrorCode.ESCROW_CREATION_FAILED);
     }
   }
@@ -161,7 +160,7 @@ export class NearEscrowService extends EventEmitter {
    */
   async withdrawFunds(escrowAccountId: string, secret: string, immutables?: NearEscrowImmutables): Promise<string> {
     try {
-      this.logger.info('Withdrawing funds from NEAR escrow', { escrowAccountId });
+      console.log(`Withdrawing funds from NEAR escrow: ${escrowAccountId}`);
 
       let escrow = this.escrowContracts.get(escrowAccountId);
       if (!escrow) {
@@ -183,10 +182,7 @@ export class NearEscrowService extends EventEmitter {
         gas: '100000000000000' // 100 TGas
       });
 
-      this.logger.info('Funds withdrawn from NEAR escrow', { 
-        escrowAccountId, 
-        result 
-      });
+      console.log(`Funds withdrawn from NEAR escrow: ${escrowAccountId}`);
       
       this.emit('fundsWithdrawn', { 
         chain: 'near',
@@ -198,7 +194,7 @@ export class NearEscrowService extends EventEmitter {
       return JSON.stringify(result);
       
     } catch (error) {
-      this.logger.error('Failed to withdraw funds from NEAR escrow', { error, escrowAccountId });
+      console.error(`Failed to withdraw funds from NEAR escrow ${escrowAccountId}:`, error);
       throw new SolverError('Failed to withdraw funds from NEAR escrow', SolverErrorCode.WITHDRAWAL_ERROR);
     }
   }
@@ -208,7 +204,7 @@ export class NearEscrowService extends EventEmitter {
    */
   async cancelEscrow(escrowAccountId: string): Promise<string> {
     try {
-      this.logger.info('Cancelling NEAR escrow', { escrowAccountId });
+      console.log(`Cancelling NEAR escrow: ${escrowAccountId}`);
 
       let escrow = this.escrowContracts.get(escrowAccountId);
       if (!escrow) {
@@ -224,7 +220,7 @@ export class NearEscrowService extends EventEmitter {
         gas: '50000000000000' // 50 TGas
       });
 
-      this.logger.info('NEAR escrow cancelled', { escrowAccountId, result });
+      console.log(`NEAR escrow cancelled: ${escrowAccountId}`);
       this.emit('escrowCancelled', { 
         chain: 'near',
         address: escrowAccountId, 
@@ -234,7 +230,7 @@ export class NearEscrowService extends EventEmitter {
       return JSON.stringify(result);
       
     } catch (error) {
-      this.logger.error('Failed to cancel NEAR escrow', { error, escrowAccountId });
+      console.error(`Failed to cancel NEAR escrow ${escrowAccountId}:`, error);
       throw new SolverError('Failed to cancel NEAR escrow', SolverErrorCode.CANCELLATION_ERROR);
     }
   }
@@ -244,7 +240,7 @@ export class NearEscrowService extends EventEmitter {
    */
   async getEscrowInfo(escrowAccountId: string): Promise<any> {
     try {
-      this.logger.debug('Getting NEAR escrow info', { escrowAccountId });
+      console.log(`Getting NEAR escrow info: ${escrowAccountId}`);
 
       let escrow = this.escrowContracts.get(escrowAccountId);
       if (!escrow) {
@@ -258,11 +254,11 @@ export class NearEscrowService extends EventEmitter {
       // Get escrow state
       const info = await escrow.get_escrow_info();
       
-      this.logger.debug('Retrieved NEAR escrow info', { escrowAccountId, info });
+      console.log(`Retrieved NEAR escrow info: ${escrowAccountId}`);
       return info;
       
     } catch (error) {
-      this.logger.error('Failed to get NEAR escrow info', { error, escrowAccountId });
+      console.error(`Failed to get NEAR escrow info ${escrowAccountId}:`, error);
       throw new SolverError('Failed to get escrow info', SolverErrorCode.CONTRACT_ERROR);
     }
   }
@@ -284,7 +280,7 @@ export class NearEscrowService extends EventEmitter {
       const canWithdraw = await escrow.can_withdraw();
       return canWithdraw;
     } catch (error) {
-      this.logger.debug('Failed to check withdraw status', { error, escrowAccountId });
+      console.log(`Failed to check withdraw status for ${escrowAccountId}:`, error);
       return false;
     }
   }
@@ -306,7 +302,7 @@ export class NearEscrowService extends EventEmitter {
       const canCancel = await escrow.can_cancel();
       return canCancel;
     } catch (error) {
-      this.logger.debug('Failed to check cancel status', { error, escrowAccountId });
+      console.log(`Failed to check cancel status for ${escrowAccountId}:`, error);
       return false;
     }
   }
@@ -339,7 +335,7 @@ export class NearEscrowService extends EventEmitter {
       return balances;
       
     } catch (error) {
-      this.logger.error('Failed to get NEAR balances', { error });
+      console.error('Failed to get NEAR balances:', error);
       return [];
     }
   }
@@ -362,7 +358,7 @@ export class NearEscrowService extends EventEmitter {
       return true;
       
     } catch (error) {
-      this.logger.error('NEAR health check failed', { error });
+      console.error('NEAR health check failed:', error);
       return false;
     }
   }
@@ -372,7 +368,7 @@ export class NearEscrowService extends EventEmitter {
    */
   private async connectToNear(): Promise<void> {
     try {
-      this.logger.debug('Connecting to NEAR network', { networkId: this.networkId });
+      console.log(`Connecting to NEAR network: ${this.networkId}`);
 
       const keyPair = this.parsePrivateKey(this.privateKey);
       const keyStore = new keyStores.InMemoryKeyStore();
@@ -393,10 +389,10 @@ export class NearEscrowService extends EventEmitter {
         signer: new InMemorySigner(keyStore)
       });
       
-      this.logger.debug('Connected to NEAR network');
+      console.log('Connected to NEAR network');
       
     } catch (error) {
-      this.logger.error('Failed to connect to NEAR', { error });
+      console.error('Failed to connect to NEAR:', error);
       throw error;
     }
   }
@@ -410,17 +406,17 @@ export class NearEscrowService extends EventEmitter {
         throw new Error('NEAR connection not established');
       }
 
-      this.logger.debug('Initializing NEAR account', { accountId: this.accountId });
+      console.log(`Initializing NEAR account: ${this.accountId}`);
       
       this.account = await this.near.account(this.accountId);
       
       // Verify account exists
       await this.account.state();
       
-      this.logger.debug('NEAR account initialized');
+      console.log('NEAR account initialized');
       
     } catch (error) {
-      this.logger.error('Failed to initialize NEAR account', { error });
+      console.error('Failed to initialize NEAR account:', error);
       throw error;
     }
   }
@@ -434,7 +430,7 @@ export class NearEscrowService extends EventEmitter {
         throw new Error('NEAR account not initialized');
       }
 
-      this.logger.debug('Initializing factory contract', { contractId: this.factoryContractId });
+      console.log(`Initializing factory contract: ${this.factoryContractId}`);
       
       this.factoryContract = new Contract(
         this.account,
@@ -446,10 +442,10 @@ export class NearEscrowService extends EventEmitter {
         }
       ) as Contract & any;
       
-      this.logger.debug('Factory contract initialized');
+      console.log('Factory contract initialized');
       
     } catch (error) {
-      this.logger.error('Failed to initialize factory contract', { error });
+      console.error('Failed to initialize factory contract:', error);
       throw error;
     }
   }
@@ -463,7 +459,7 @@ export class NearEscrowService extends EventEmitter {
         throw new Error('NEAR account not initialized');
       }
 
-      this.logger.debug('Initializing escrow contract', { escrowAccountId });
+      console.log(`Initializing escrow contract: ${escrowAccountId}`);
       
       const escrowContract = new Contract(
         this.account,
@@ -476,10 +472,10 @@ export class NearEscrowService extends EventEmitter {
       ) as Contract & any;
       
       this.escrowContracts.set(escrowAccountId, escrowContract);
-      this.logger.debug('Escrow contract initialized', { escrowAccountId });
+      console.log(`Escrow contract initialized: ${escrowAccountId}`);
       
     } catch (error) {
-      this.logger.error('Failed to initialize escrow contract', { error, escrowAccountId });
+      console.error(`Failed to initialize escrow contract ${escrowAccountId}:`, error);
       throw error;
     }
   }
@@ -496,7 +492,7 @@ export class NearEscrowService extends EventEmitter {
         return KeyPair.fromString(`ed25519:${privateKey}` as any);
       }
     } catch (error) {
-      this.logger.error('Failed to parse private key', { error });
+      console.error('Failed to parse private key:', error);
       throw new Error('Invalid NEAR private key format');
     }
   }
@@ -512,7 +508,7 @@ export class NearEscrowService extends EventEmitter {
         return creationFee;
       }
     } catch (error) {
-      this.logger.debug('Could not get creation fee from factory, using default', { error });
+      console.log('Could not get creation fee from factory, using default');
     }
     
     // Fallback to default storage deposit for escrow contracts on NEAR testnet
@@ -541,7 +537,7 @@ export class NearEscrowService extends EventEmitter {
       return `escrow-${timestamp}.${this.factoryContractId}`;
       
     } catch (error) {
-      this.logger.error('Failed to parse escrow ID', { error, result });
+      console.error('Failed to parse escrow ID:', error);
       // Generate fallback ID
       return `escrow-${Date.now()}.${this.factoryContractId}`;
     }

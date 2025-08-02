@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { ArrowUpDown, Loader, AlertCircle, CheckCircle, Clock } from "lucide-react";
 import Link from "next/link";
 import { Geist_Mono } from "next/font/google";
@@ -11,7 +11,7 @@ import { setupMeteorWallet } from "@near-wallet-selector/meteor-wallet";
 import { setupHereWallet } from "@near-wallet-selector/here-wallet";
 import { setupMyNearWallet } from "@near-wallet-selector/my-near-wallet";
 import { useAppKit } from "@reown/appkit/react";
-import { useAccount } from "wagmi";
+import { useAccount, useBalance } from "wagmi";
 import { 
   solverService, 
   SwapOrder, 
@@ -45,6 +45,18 @@ export default function SwapPage() {
   const [isNEARConnected, setIsNEARConnected] = useState(false);
   const [nearAddress, setNearAddress] = useState<string>("");
   const [nearSelector, setNearSelector] = useState<WalletSelector | null>(null);
+  
+  // Balance tracking
+  const [nearBalance, setNearBalance] = useState<string>("0");
+  
+  // Get ETH balance using wagmi
+  const { data: ethBalanceData } = useBalance({
+    address: ethAddress as `0x${string}`,
+    query: {
+      enabled: !!ethAddress && isETHConnected,
+      refetchInterval: 30000, // Refetch every 30 seconds
+    },
+  });
 
   const [fromAmount, setFromAmount] = useState("");
   const [toAmount, setToAmount] = useState("");
@@ -79,6 +91,48 @@ export default function SwapPage() {
     } 
   };
 
+  // Fetch NEAR balance
+  const fetchNearBalance = useCallback(async () => {
+    if (!nearAddress || !isNEARConnected) {
+      setNearBalance("0");
+      return;
+    }
+
+    try {
+      // Using NEAR RPC to get account balance
+      const response = await fetch('https://rpc.testnet.near.org', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'dontcare',
+          method: 'query',
+          params: {
+            request_type: 'view_account',
+            finality: 'final',
+            account_id: nearAddress,
+          },
+        }),
+      });
+
+      const data = await response.json();
+      
+      if (data.result) {
+        // Convert yoctoNEAR to NEAR (1 NEAR = 10^24 yoctoNEAR)
+        const balanceInYocto = data.result.amount;
+        const balanceInNear = parseFloat(balanceInYocto) / 1e24;
+        setNearBalance(balanceInNear.toFixed(6));
+      } else {
+        setNearBalance("0");
+      }
+    } catch (error) {
+      console.error('Error fetching NEAR balance:', error);
+      setNearBalance("0");
+    }
+  }, [nearAddress, isNEARConnected]);
+
   // Initialize NEAR wallet selector and check for existing connections
   useEffect(() => {
     const initializeNearWallet = async () => {
@@ -112,6 +166,7 @@ export default function SwapPage() {
           console.log("NEAR wallet disconnected");
           setIsNEARConnected(false);
           setNearAddress("");
+          setNearBalance("0");
         });
 
       } catch (error) {
@@ -121,6 +176,18 @@ export default function SwapPage() {
 
     initializeNearWallet();
   }, []);
+
+  // Fetch NEAR balance when address changes
+  useEffect(() => {
+    if (nearAddress && isNEARConnected) {
+      fetchNearBalance();
+      // Refresh NEAR balance every 30 seconds
+      const interval = setInterval(fetchNearBalance, 30000);
+      return () => clearInterval(interval);
+    } else {
+      setNearBalance("0");
+    }
+  }, [nearAddress, isNEARConnected, fetchNearBalance]);
 
   // Fetch prices on component mount and setup WebSocket
   useEffect(() => {
@@ -184,10 +251,18 @@ export default function SwapPage() {
     }
   };
 
+  // Get current balance for a token
+  const getTokenBalance = (token: string): number => {
+    if (token === "ETH") {
+      return ethBalanceData ? parseFloat(ethBalanceData.formatted) : 0;
+    } else {
+      return parseFloat(nearBalance);
+    }
+  };
+
   const handlePercentage = (percentage: number) => {
-    // Mock balance for demonstration
-    const mockBalance = 10;
-    const amount = ((mockBalance * percentage) / 100).toString();
+    const currentBalance = getTokenBalance(fromToken);
+    const amount = ((currentBalance * percentage) / 100).toString();
     handleFromAmountChange(amount);
   };
 
@@ -246,7 +321,7 @@ export default function SwapPage() {
         destinationAmount: toAmount,
         userAddress: fromToken === "ETH" ? ethAddress : nearAddress,
         recipientAddress: toToken === "ETH" ? ethAddress : nearAddress,
-        slippageTolerance: 1.0 // 1% tolerance
+        slippageTolerance: 1.0
       };
 
       console.log('Executing swap:', swapRequest);
@@ -363,7 +438,7 @@ export default function SwapPage() {
             <div className="flex items-center justify-between mb-4">
               <input
                 type="text"
-                value={fromAmount}
+                value={Number(fromAmount).toFixed(6)}
                 onChange={(e) => handleFromAmountChange(e.target.value)}
                 placeholder="0.0"
                 className="text-4xl font-light bg-transparent border-none outline-none text-white placeholder-gray-400 w-full"
@@ -384,6 +459,11 @@ export default function SwapPage() {
                 {formatUSDValue(getUSDValue(fromAmount, fromToken))}
               </div>
               <div className="text-gray-400 text-sm">
+                Balance: {getTokenBalance(fromToken).toFixed(6)} {fromToken}
+              </div>
+            </div>
+            <div className="flex items-center justify-end mt-1">
+              <div className="text-gray-500 text-xs">
                 1 {fromToken} = {formatUSDValue(getTokenPrice(fromToken))}
               </div>
             </div>
@@ -429,7 +509,7 @@ export default function SwapPage() {
           {/* To Token */}
           <div className="bg-gray-800 rounded-xl p-4">
             <div className="flex items-center justify-between mb-4">
-              <div className="text-4xl font-light">{toAmount || "0.0"}</div>
+              <div className="text-4xl font-light">{Number(Number(toAmount).toFixed(6)) || "0.0"}</div>
               <div className="min-w-fit flex items-center gap-2 bg-gray-700 rounded-xl px-3 py-2">
                 <Image
                   src={getTokenIcon(toToken)}
@@ -446,6 +526,11 @@ export default function SwapPage() {
                 {formatUSDValue(getUSDValue(toAmount, toToken))}
               </div>
               <div className="text-gray-400 text-sm">
+                Balance: {getTokenBalance(toToken).toFixed(6)} {toToken}
+              </div>
+            </div>
+            <div className="flex items-center justify-end mt-1">
+              <div className="text-gray-500 text-xs">
                 1 {toToken} = {formatUSDValue(getTokenPrice(toToken))}
               </div>
             </div>

@@ -8,7 +8,7 @@ import {
   SolverError,
   SolverErrorCode
 } from '../types';
-import { Logger } from '../utils/Logger';
+
 
 // Contract ABIs
 const ESCROW_FACTORY_ABI = [
@@ -45,8 +45,7 @@ export class EVMEscrowService extends EventEmitter {
   
   constructor(
     private networks: Record<ChainId, NetworkConfig>,
-    private privateKey: string,
-    private logger: Logger
+    private privateKey: string
   ) {
     super();
   }
@@ -56,7 +55,7 @@ export class EVMEscrowService extends EventEmitter {
    */
   async initialize(): Promise<void> {
     try {
-      this.logger.info('Initializing EVMEscrowService...');
+      console.log('Initializing EVMEscrowService...');
       
       // Initialize Base Sepolia chain
       for (const [chainId, config] of Object.entries(this.networks)) {
@@ -65,10 +64,10 @@ export class EVMEscrowService extends EventEmitter {
         }
       }
       
-      this.logger.info('EVMEscrowService initialized successfully');
+      console.log('EVMEscrowService initialized successfully');
       
     } catch (error) {
-      this.logger.error('Failed to initialize EVMEscrowService', { error });
+      console.error('Failed to initialize EVMEscrowService:', error);
       throw error;
     }
   }
@@ -78,9 +77,10 @@ export class EVMEscrowService extends EventEmitter {
    */
   async createDstEscrow(chainId: ChainId, immutables: EscrowImmutables): Promise<string> {
     try {
-      this.logger.info('Creating EVM destination escrow', { chainId });
+      console.log(`Creating EVM destination escrow on chain: ${chainId}`);
 
       const factory = this.factoryContracts.get(chainId);
+
       if (!factory) {
         throw new SolverError(`No factory contract for chain ${chainId}`, SolverErrorCode.CONTRACT_ERROR, chainId);
       }
@@ -93,12 +93,15 @@ export class EVMEscrowService extends EventEmitter {
       
       // Add safety deposit to immutables
       contractImmutables.safetyDeposit = safetyDeposit;
+
       
       // Create destination escrow
       const tx = await factory.createDstEscrow(
         contractImmutables,
-        { value: safetyDeposit }
+        { value: safetyDeposit + BigInt(contractImmutables.amount) }
       );
+
+      console.log('tx', tx);
       
       const receipt = await tx.wait();
       const escrowAddress = this.parseEscrowCreatedEvent(receipt);
@@ -106,13 +109,13 @@ export class EVMEscrowService extends EventEmitter {
       // Initialize escrow contract instance
       await this.initializeEscrowContract(escrowAddress);
       
-      this.logger.info('EVM destination escrow created', { chainId, escrowAddress });
+      console.log(`EVM destination escrow created on ${chainId}: ${escrowAddress}`);
       this.emit('escrowCreated', { chainId, address: escrowAddress, type: 'destination' });
       
       return escrowAddress;
       
     } catch (error) {
-      this.logger.error('Failed to create EVM destination escrow', { error, chainId });
+      console.error(`Failed to create EVM destination escrow on ${chainId}:`, error);
       throw new SolverError('Failed to create destination escrow', SolverErrorCode.ESCROW_CREATION_FAILED, chainId);
     }
   }
@@ -130,7 +133,7 @@ export class EVMEscrowService extends EventEmitter {
    */
   async withdrawFunds(chainId: ChainId, escrowAddress: string, secret: string, immutables: EscrowImmutables): Promise<string> {
     try {
-      this.logger.info('Withdrawing funds from EVM escrow', { chainId, escrowAddress });
+      console.log(`Withdrawing funds from EVM escrow on ${chainId}: ${escrowAddress}`);
 
       let escrow = this.escrowContracts.get(escrowAddress);
       if (!escrow) {
@@ -152,11 +155,7 @@ export class EVMEscrowService extends EventEmitter {
       const tx = await escrow.withdraw(secretBytes32, contractImmutables);
       const receipt = await tx.wait();
       
-      this.logger.info('Funds withdrawn from EVM escrow', { 
-        chainId, 
-        address: escrowAddress, 
-        transactionHash: receipt.hash 
-      });
+      console.log(`Funds withdrawn from EVM escrow on ${chainId} at ${escrowAddress}: ${receipt.hash}`);
       
       this.emit('fundsWithdrawn', { 
         chainId, 
@@ -168,7 +167,7 @@ export class EVMEscrowService extends EventEmitter {
       return receipt.hash;
       
     } catch (error) {
-      this.logger.error('Failed to withdraw funds from EVM escrow', { error, chainId, escrowAddress });
+      console.error(`Failed to withdraw funds from EVM escrow on ${chainId} at ${escrowAddress}:`, error);
       throw new SolverError('Failed to withdraw funds', SolverErrorCode.WITHDRAWAL_ERROR, chainId);
     }
   }
@@ -178,7 +177,7 @@ export class EVMEscrowService extends EventEmitter {
    */
   async cancelEscrow(chainId: ChainId, escrowAddress: string, immutables: EscrowImmutables): Promise<string> {
     try {
-      this.logger.info('Cancelling EVM escrow', { chainId, escrowAddress });
+      console.log(`Cancelling EVM escrow on ${chainId}: ${escrowAddress}`);
 
       let escrow = this.escrowContracts.get(escrowAddress);
       if (!escrow) {
@@ -196,11 +195,7 @@ export class EVMEscrowService extends EventEmitter {
       const tx = await escrow.cancel(contractImmutables);
       const receipt = await tx.wait();
       
-      this.logger.info('EVM escrow cancelled', { 
-        chainId, 
-        address: escrowAddress, 
-        transactionHash: receipt.hash 
-      });
+      console.log(`EVM escrow cancelled on ${chainId} at ${escrowAddress}: ${receipt.hash}`);
       
       this.emit('escrowCancelled', { 
         chainId, 
@@ -211,7 +206,7 @@ export class EVMEscrowService extends EventEmitter {
       return receipt.hash;
       
     } catch (error) {
-      this.logger.error('Failed to cancel EVM escrow', { error, chainId, escrowAddress });
+      console.error(`Failed to cancel EVM escrow on ${chainId} at ${escrowAddress}:`, error);
       throw new SolverError('Failed to cancel escrow', SolverErrorCode.CANCELLATION_ERROR, chainId);
     }
   }
@@ -233,7 +228,7 @@ export class EVMEscrowService extends EventEmitter {
       return address;
       
     } catch (error) {
-      this.logger.error('Failed to get escrow address', { error, chainId });
+      console.error(`Failed to get escrow address on ${chainId}:`, error);
       throw new SolverError('Failed to get escrow address', SolverErrorCode.CONTRACT_ERROR, chainId);
     }
   }
@@ -267,7 +262,7 @@ export class EVMEscrowService extends EventEmitter {
       return balances;
       
     } catch (error) {
-      this.logger.error('Failed to get balances', { error, chainId });
+      console.error(`Failed to get balances on ${chainId}:`, error);
       return [];
     }
   }
@@ -283,7 +278,7 @@ export class EVMEscrowService extends EventEmitter {
       }
       return true;
     } catch (error) {
-      this.logger.error('EVM health check failed', { error });
+      console.error('EVM health check failed:', error);
       return false;
     }
   }
@@ -293,7 +288,7 @@ export class EVMEscrowService extends EventEmitter {
    */
   private async initializeChain(chainId: ChainId, config: NetworkConfig): Promise<void> {
     try {
-      this.logger.debug('Initializing EVM chain', { chainId });
+      console.log(`Initializing EVM chain: ${chainId}`);
 
       // Create provider
       const provider = new ethers.JsonRpcProvider(config.rpcUrl);
@@ -313,10 +308,10 @@ export class EVMEscrowService extends EventEmitter {
         this.factoryContracts.set(chainId, factoryContract);
       }
 
-      this.logger.debug('EVM chain initialized', { chainId });
+      console.log(`EVM chain initialized: ${chainId}`);
       
     } catch (error) {
-      this.logger.error('Failed to initialize EVM chain', { error, chainId });
+      console.error(`Failed to initialize EVM chain ${chainId}:`, error);
       throw error;
     }
   }
@@ -339,10 +334,10 @@ export class EVMEscrowService extends EventEmitter {
       );
       
       this.escrowContracts.set(escrowAddress, escrowContract);
-      this.logger.debug('Escrow contract initialized', { escrowAddress });
+      console.log(`Escrow contract initialized: ${escrowAddress}`);
       
     } catch (error) {
-      this.logger.error('Failed to initialize escrow contract', { error, escrowAddress });
+      console.error(`Failed to initialize escrow contract ${escrowAddress}:`, error);
       throw error;
     }
   }
@@ -351,13 +346,18 @@ export class EVMEscrowService extends EventEmitter {
    * Format immutables for contract calls
    */
   private formatImmutablesForContract(immutables: EscrowImmutables): any {
+    // Validate and normalize addresses to prevent ENS resolution attempts
+    const makerAddress = this.validateAndNormalizeAddress(immutables.srcAddr);
+    const takerAddress = this.validateAndNormalizeAddress(immutables.dstAddr);
+    const tokenAddress = this.validateAndNormalizeAddress(immutables.dstToken);
+
     return {
       orderHash: immutables.hashlock, // Using hashlock as orderHash for simplicity
       hashlock: immutables.hashlock,
-      maker: immutables.srcAddr,
-      taker: immutables.dstAddr,
-      token: immutables.dstToken,
-      amount: BigInt(immutables.dstAmount),
+      maker: makerAddress,
+      taker: takerAddress,
+      token: tokenAddress,
+      amount: ethers.parseEther(immutables.amount),
       safetyDeposit: BigInt(0), // Will be set separately
       timelocks: {
         srcLockTime: immutables.timelocks.src_lock_time,
@@ -369,12 +369,25 @@ export class EVMEscrowService extends EventEmitter {
   }
 
   /**
+   * Validate and normalize an Ethereum address to prevent ENS resolution
+   */
+  private validateAndNormalizeAddress(address: string): string {
+    // Check if it's a valid Ethereum address
+    if (!ethers.isAddress(address)) {
+      throw new Error(`Invalid Ethereum address: ${address}`);
+    }
+    
+    // Return the checksummed address (this normalizes it without ENS resolution)
+    return ethers.getAddress(address);
+  }
+
+  /**
    * Calculate required safety deposit for escrow creation
    */
   private calculateSafetyDeposit(immutables: EscrowImmutables): bigint {
     // Calculate safety deposit based on gas costs and security requirements
     // For testnet, use a minimal amount
-    return ethers.parseEther('0.001'); // 0.001 ETH safety deposit
+    return ethers.parseEther('0.00001'); // 0.001 ETH safety deposit
   }
 
   /**
@@ -409,7 +422,7 @@ export class EVMEscrowService extends EventEmitter {
       throw new Error('DstEscrowCreated event not found in receipt');
       
     } catch (error) {
-      this.logger.error('Failed to parse escrow created event', { error });
+      console.error('Failed to parse escrow created event:', error);
       // Return a placeholder for now - in production this should throw
       throw new Error('Failed to parse escrow address from transaction receipt');
     }

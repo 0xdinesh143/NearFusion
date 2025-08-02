@@ -8,7 +8,7 @@ import { SwapService } from './services/SwapService';
 import { EVMEscrowService } from './services/EVMEscrowService';
 import { NearEscrowService } from './services/NearEscrowService';
 import { TEESecurityService } from './services/TEESecurityService';
-import { Logger, LogLevel } from './utils/Logger';
+
 import { 
   SolverConfig, 
   SwapRequest,
@@ -18,8 +18,7 @@ import {
   SwapOrder
 } from './types';
 
-// Initialize logger
-const logger = new Logger('Main', process.env.LOG_LEVEL === 'debug' ? LogLevel.DEBUG : LogLevel.INFO);
+
 
 /**
  * Load configuration from environment variables
@@ -78,9 +77,7 @@ function loadConfiguration(): SolverConfig {
         origins: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:3000']
       }
     },
-    logging: {
-      level: (process.env.LOG_LEVEL as any) || 'info'
-    }
+
   };
 
   return config;
@@ -90,16 +87,15 @@ function loadConfiguration(): SolverConfig {
  * Initialize all services
  */
 async function initializeServices(config: SolverConfig) {
-  logger.info('Initializing services...');
+  console.log('Initializing services...');
 
   // Initialize TEE service
-  const teeService = new TEESecurityService(config.tee, logger.child('TEE'));
+  const teeService = new TEESecurityService(config.tee);
 
   // Initialize EVM escrow service
   const evmEscrowService = new EVMEscrowService(
     config.networks,
-    config.evm.privateKey,
-    logger.child('EVMEscrow')
+    config.evm.privateKey
   );
 
   // Initialize NEAR escrow service
@@ -108,8 +104,7 @@ async function initializeServices(config: SolverConfig) {
     config.near.accountId,
     config.near.privateKey,
     config.near.rpcUrl,
-    config.near.factoryContractId,
-    logger.child('NEAREscrow')
+    config.near.factoryContractId
   );
 
 
@@ -118,8 +113,7 @@ async function initializeServices(config: SolverConfig) {
   const swapService = new SwapService(
     config.swap,
     evmEscrowService,
-    nearEscrowService,
-    logger.child('Swap')
+    nearEscrowService
   );
 
   return {
@@ -136,32 +130,32 @@ async function initializeServices(config: SolverConfig) {
 function setupWebSocketEvents(solver: ShadeAgentSolver, io: SocketIOServer): void {
   // Handle WebSocket connections
   io.on('connection', (socket) => {
-    logger.info('Client connected to WebSocket', { socketId: socket.id });
+    console.log(`Client connected to WebSocket: ${socket.id}`);
 
     // Send current solver state on connection
     socket.emit('solverState', solver.getState());
 
     // Handle client disconnection
     socket.on('disconnect', () => {
-      logger.info('Client disconnected from WebSocket', { socketId: socket.id });
+      console.log(`Client disconnected from WebSocket: ${socket.id}`);
     });
 
     // Handle client subscribing to specific swap events
     socket.on('subscribeToSwap', (swapId: string) => {
       socket.join(`swap:${swapId}`);
-      logger.debug('Client subscribed to swap events', { socketId: socket.id, swapId });
+      console.log(`Client ${socket.id} subscribed to swap: ${swapId}`);
     });
 
     // Handle client unsubscribing from swap events
     socket.on('unsubscribeFromSwap', (swapId: string) => {
       socket.leave(`swap:${swapId}`);
-      logger.debug('Client unsubscribed from swap events', { socketId: socket.id, swapId });
+      console.log(`Client ${socket.id} unsubscribed from swap: ${swapId}`);
     });
   });
 
   // Broadcast swap events to all connected clients
   solver.on('swapCompleted', (result: SwapResult) => {
-    logger.debug('Broadcasting swap completed event', { swapId: result.swapId });
+    console.log(`Broadcasting swap completed event for swap: ${result.swapId}`);
     
     // Broadcast to all clients
     io.emit('swapCompleted', {
@@ -180,7 +174,7 @@ function setupWebSocketEvents(solver: ShadeAgentSolver, io: SocketIOServer): voi
   });
 
   solver.on('swapCancelled', (data: { swapId: string }) => {
-    logger.debug('Broadcasting swap cancelled event', { swapId: data.swapId });
+    console.log(`Broadcasting swap cancelled event for swap: ${data.swapId}`);
     
     // Broadcast to all clients
     io.emit('swapCancelled', {
@@ -199,7 +193,7 @@ function setupWebSocketEvents(solver: ShadeAgentSolver, io: SocketIOServer): voi
   });
 
   solver.on('swapStatusChanged', (swap: SwapOrder) => {
-    logger.debug('Broadcasting swap status changed event', { swapId: swap.id, status: swap.status });
+    console.log(`Broadcasting swap status changed for swap ${swap.id}: ${swap.status}`);
     
     // Broadcast to specific swap subscribers
     io.to(`swap:${swap.id}`).emit('swapUpdate', {
@@ -211,7 +205,7 @@ function setupWebSocketEvents(solver: ShadeAgentSolver, io: SocketIOServer): voi
   });
 
   solver.on('error', (error: Error) => {
-    logger.debug('Broadcasting solver error event', { error: error.message });
+    console.error(`Broadcasting solver error: ${error.message}`);
     
     // Broadcast error to all clients
     io.emit('solverError', {
@@ -238,11 +232,7 @@ function setupApiServer(solver: ShadeAgentSolver, config: SolverConfig, io: Sock
 
   // Request logging middleware
   app.use((req, res, next) => {
-    logger.debug(`${req.method} ${req.path}`, { 
-      body: req.body, 
-      query: req.query,
-      ip: req.ip 
-    });
+    console.log(`${req.method} ${req.path}`);
     next();
   });
 
@@ -260,7 +250,7 @@ function setupApiServer(solver: ShadeAgentSolver, config: SolverConfig, io: Sock
       };
       res.json(response);
     } catch (error) {
-      logger.error('Failed to get state', { error });
+      console.error('Failed to get state:', error);
       const response: ApiResponse = {
         success: false,
         error: 'Failed to get solver state',
@@ -282,7 +272,7 @@ function setupApiServer(solver: ShadeAgentSolver, config: SolverConfig, io: Sock
       };
       res.json(response);
     } catch (error) {
-      logger.error('Failed to get metrics', { error });
+      console.error('Failed to get metrics:', error);
       const response: ApiResponse = {
         success: false,
         error: 'Failed to get solver metrics',
@@ -318,7 +308,7 @@ function setupApiServer(solver: ShadeAgentSolver, config: SolverConfig, io: Sock
       };
       res.status(201).json(response);
     } catch (error) {
-      logger.error('Failed to execute complete swap', { error, body: req.body });
+      console.error('Failed to execute complete swap:', error);
       const response: ApiResponse = {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to execute swap',
@@ -339,7 +329,7 @@ function setupApiServer(solver: ShadeAgentSolver, config: SolverConfig, io: Sock
       };
       res.json(response);
     } catch (error) {
-      logger.error('Failed to get swaps', { error });
+      console.error('Failed to get swaps:', error);
       const response: ApiResponse = {
         success: false,
         error: 'Failed to get swaps',
@@ -369,7 +359,7 @@ function setupApiServer(solver: ShadeAgentSolver, config: SolverConfig, io: Sock
       };
       res.json(response);
     } catch (error) {
-      logger.error('Failed to get swap', { error, swapId: req.params.id });
+      console.error(`Failed to get swap ${req.params.id}:`, error);
       const response: ApiResponse = {
         success: false,
         error: 'Failed to get swap',
@@ -390,7 +380,7 @@ function setupApiServer(solver: ShadeAgentSolver, config: SolverConfig, io: Sock
       };
       res.json(response);
     } catch (error) {
-      logger.error('Failed to cancel swap', { error, swapId: req.params.id });
+      console.error(`Failed to cancel swap ${req.params.id}:`, error);
       const response: ApiResponse = {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to cancel swap',
@@ -402,7 +392,7 @@ function setupApiServer(solver: ShadeAgentSolver, config: SolverConfig, io: Sock
 
   // Error handling middleware
   app.use((error: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
-    logger.error('Unhandled API error', { error, path: req.path, method: req.method });
+    console.error(`Unhandled API error at ${req.method} ${req.path}:`, error);
     const response: ApiResponse = {
       success: false,
       error: 'Internal server error',
@@ -458,21 +448,20 @@ function setupApiServer(solver: ShadeAgentSolver, config: SolverConfig, io: Sock
  */
 async function main() {
   try {
-    logger.info('Starting NearFusion Shade Agent Solver Backend...');
+    console.log('Starting NearFusion Shade Agent Solver Backend...');
 
     // Load configuration
     const config = loadConfiguration();
-    logger.info('Configuration loaded');
+    console.log('Configuration loaded');
 
     // Initialize services
     const services = await initializeServices(config);
-    logger.info('Services initialized');
+    console.log('Services initialized');
 
     // Create solver instance
     const solver = new ShadeAgentSolver(
       services.swapService,
-      services.teeService,
-      logger.child('Solver')
+      services.teeService
     );
 
     // Create HTTP server for Socket.IO
@@ -494,48 +483,48 @@ async function main() {
 
     // Start solver
     await solver.start();
-    logger.info('Solver started');
+    console.log('Solver started');
 
     // Start HTTP server with WebSocket support
     httpServer.listen(config.server.port, () => {
-      logger.info(`NearFusion Solver API server running on port ${config.server.port}`);
-      logger.info(`WebSocket server running on ws://localhost:${config.server.port}`);
-      logger.info(`Health check: http://localhost:${config.server.port}/health`);
+      console.log(`NearFusion Solver API server running on port ${config.server.port}`);
+      console.log(`WebSocket server running on ws://localhost:${config.server.port}`);
+      console.log(`Health check: http://localhost:${config.server.port}/health`);
     });
 
     // Graceful shutdown
     const shutdown = async (signal: string) => {
-      logger.info(`Received ${signal}, shutting down gracefully...`);
-      
-      httpServer.close(async () => {
-        try {
-          await solver.stop();
-          logger.info('Graceful shutdown completed');
-          process.exit(0);
-        } catch (error) {
-          logger.error('Error during shutdown', { error });
-          process.exit(1);
-        }
-      });
+      console.log(`Received ${signal}, shutting down gracefully...`);
+    
+      // httpServer.close(async () => {
+      //   try {
+      //     await solver.stop();
+      //     console.log('Graceful shutdown completed');
+      //     process.exit(0);
+      //   } catch (error) {
+      //     console.error('Error during shutdown:', error);
+      //     process.exit(1);
+      //   }
+      // });
     };
 
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
 
   } catch (error) {
-    logger.error('Failed to start application', { error });
+    console.error('Failed to start application:', error);
     process.exit(1);
   }
 }
 
 // Handle unhandled rejections and uncaught exceptions
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection', { reason, promise });
+  console.error('Unhandled Rejection:', reason);
   process.exit(1);
 });
 
 process.on('uncaughtException', (error) => {
-  logger.error('Uncaught Exception', { error });
+  console.error('Uncaught Exception:', error);
   process.exit(1);
 });
 

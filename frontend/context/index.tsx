@@ -3,7 +3,7 @@
 import { wagmiAdapter, projectId } from '@/config'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createAppKit } from '@reown/appkit/react'
-import { mainnet, arbitrum } from '@reown/appkit/networks'
+import { mainnet, arbitrum, baseSepolia } from '@reown/appkit/networks'
 import React, { type ReactNode } from 'react'
 import { cookieToInitialState, WagmiProvider, type Config } from 'wagmi'
 
@@ -18,20 +18,16 @@ if (!projectId) {
 const metadata = {
   name: 'NearFusion',
   description: 'Swap ETH to NEAR',
-  url: 'https://nearfusion.com', // origin must match your domain & subdomain
-  icons: ['https://avatars.githubusercontent.com/u/179229932']
+  url: 'https://nearfusion.vercel.app', // origin must match your domain & subdomain
+  icons: ['https://nearfusion.vercel.app/favicon.ico']
 }
 
 // Create the modal
 const modal = createAppKit({
   adapters: [wagmiAdapter],
   projectId,
-  networks: [mainnet, arbitrum],
-  defaultNetwork: mainnet,
+  networks: [baseSepolia],
   metadata: metadata,
-  features: {
-    analytics: true // Optional - defaults to your Cloud configuration
-  }
 })
 
 function ContextProvider({ children, cookies }: { children: ReactNode; cookies: string | null }) {

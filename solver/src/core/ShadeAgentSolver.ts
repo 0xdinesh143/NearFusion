@@ -10,7 +10,7 @@ import {
 } from '../types';
 import { SwapService } from '../services/SwapService';
 import { TEESecurityService } from '../services/TEESecurityService';
-import { Logger } from '../utils/Logger';
+
 
 /**
  * NearFusion Shade Agent Solver - Backend service for cross-chain atomic swaps
@@ -23,8 +23,7 @@ export class ShadeAgentSolver extends EventEmitter {
 
   constructor(
     private swapService: SwapService,
-    private teeService: TEESecurityService,
-    private logger: Logger
+    private teeService: TEESecurityService
   ) {
     super();
     
@@ -37,12 +36,12 @@ export class ShadeAgentSolver extends EventEmitter {
    */
   async start(): Promise<void> {
     if (this.isRunning) {
-      this.logger.warn('Solver is already running');
+      console.log('Solver is already running');
       return;
     }
 
     try {
-      this.logger.info('Starting NearFusion Shade Agent Solver...');
+      console.log('Starting NearFusion Shade Agent Solver...');
       // Verify TEE attestation
       // await this.verifyTEEAttestation();
 
@@ -56,9 +55,9 @@ export class ShadeAgentSolver extends EventEmitter {
       this.startTime = new Date();
 
       this.emit('started');
-      this.logger.info('Solver started successfully');
+      console.log('Solver started successfully');
     } catch (error) {
-      this.logger.error('Failed to start solver', { error });
+      console.error('Failed to start solver:', error);
       this.isRunning = false;
       this.state.isRunning = false;
       throw error;
@@ -70,12 +69,12 @@ export class ShadeAgentSolver extends EventEmitter {
    */
   async stop(): Promise<void> {
     if (!this.isRunning) {
-      this.logger.warn('Solver is not running');
+      console.log('Solver is not running');
       return;
     }
 
     try {
-      this.logger.info('Stopping Solver...');
+      console.log('Stopping Solver...');
 
       await this.shutdownServices();
 
@@ -83,9 +82,9 @@ export class ShadeAgentSolver extends EventEmitter {
       this.state.isRunning = false;
 
       this.emit('stopped');
-      this.logger.info('Solver stopped successfully');
+      console.log('Solver stopped successfully');
     } catch (error) {
-      this.logger.error('Error stopping solver', { error });
+      console.error('Error stopping solver:', error);
       throw error;
     }
   }
@@ -139,7 +138,7 @@ export class ShadeAgentSolver extends EventEmitter {
     }
 
     try {
-      this.logger.info('Starting complete swap execution', { request });
+      console.log('Starting complete swap execution');
 
       // Update state - we're processing a new swap
       this.state.activeSwaps++;
@@ -152,11 +151,11 @@ export class ShadeAgentSolver extends EventEmitter {
       this.state.successfulSwaps++;
 
       this.emit('swapCompleted', result);
-      this.logger.info('Complete swap executed successfully', { swapId: result.swapId });
+      console.log(`Complete swap executed successfully: ${result.swapId}`);
       
       return result;
     } catch (error) {
-      this.logger.error('Failed to execute complete swap', { error, request });
+      console.error('Failed to execute complete swap:', error);
       
       // Update state - swap failed
       this.state.failedSwaps++;
@@ -181,9 +180,9 @@ export class ShadeAgentSolver extends EventEmitter {
       this.state.activeSwaps--;
       
       this.emit('swapCancelled', { swapId });
-      this.logger.info('Swap cancelled successfully', { swapId });
+      console.log(`Swap cancelled successfully: ${swapId}`);
     } catch (error) {
-      this.logger.error('Failed to cancel swap', { error, swapId });
+      console.error(`Failed to cancel swap ${swapId}:`, error);
       throw error;
     }
   }
@@ -250,14 +249,14 @@ export class ShadeAgentSolver extends EventEmitter {
     });
 
     this.teeService.on('error', (error: Error) => {
-      this.logger.error('TEE service error', { error });
+      console.error('TEE service error:', error);
       this.emit('error', error);
     });
   }
 
   private async verifyTEEAttestation(): Promise<void> {
     try {
-      this.logger.info('Verifying TEE attestation...');
+      console.log('Verifying TEE attestation...');
       
       const attestation = await this.teeService.generateAttestation();
       const isValid = await this.teeService.verifyAttestation(attestation);
@@ -268,45 +267,45 @@ export class ShadeAgentSolver extends EventEmitter {
         throw new Error('TEE attestation verification failed');
       }
       
-      this.logger.info('TEE attestation verified successfully');
+      console.log('TEE attestation verified successfully');
     } catch (error) {
-      this.logger.error('TEE attestation verification failed', { error });
+      console.error('TEE attestation verification failed:', error);
       throw error;
     }
   }
 
   private async initializeServices(): Promise<void> {
-    this.logger.info('Initializing services...');
+    console.log('Initializing services...');
 
     try {
       // Initialize TEE service first
       await this.teeService.initialize();
       this.state.services.tee = true;
-      this.logger.info('TEE service initialized');
+      console.log('TEE service initialized');
 
       // Initialize swap service
       await this.swapService.initialize();
       this.state.services.swap = true;
-      this.logger.info('Swap service initialized');
+      console.log('Swap service initialized');
 
-      this.logger.info('All services initialized successfully');
+      console.log('All services initialized successfully');
     } catch (error) {
-      this.logger.error('Service initialization failed', { error });
+      console.error('Service initialization failed:', error);
       throw error;
     }
   }
 
   private async shutdownServices(): Promise<void> {
-    this.logger.info('Shutting down services...');
+    console.log('Shutting down services...');
 
     try {
       // SwapService and other services don't have explicit shutdown
       this.state.services.swap = false;
       this.state.services.tee = false;
 
-      this.logger.info('All services shutdown successfully');
+      console.log('All services shutdown successfully');
     } catch (error) {
-      this.logger.error('Service shutdown failed', { error });
+      console.error('Service shutdown failed:', error);
       throw error;
     }
   }

@@ -144,11 +144,6 @@ export interface SolverConfig {
       origins: string[];
     };
   };
-  
-  // Logging
-  logging: {
-    level: 'debug' | 'info' | 'warn' | 'error';
-  };
 }
 
 // State and Monitoring Types

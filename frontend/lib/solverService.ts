@@ -12,6 +12,7 @@ export interface SwapRequest {
   userAddress: string;
   recipientAddress: string;
   slippageTolerance?: number;
+  transferTxHash?: string; // Hash of the user's transfer to escrow factory
 }
 
 export enum SwapStatus {
@@ -70,7 +71,7 @@ export interface SolverState {
 
 // WebSocket Event Types
 export interface SwapUpdateEvent {
-  type: 'completed' | 'cancelled' | 'statusChanged';
+  type: 'initiated' | 'completed' | 'cancelled' | 'statusChanged';
   swapId: string;
   data: SwapResult | SwapOrder | { swapId: string };
   timestamp: Date;
@@ -91,6 +92,12 @@ export interface SwapCancelledEvent {
 export interface SolverErrorEvent {
   type: 'error';
   error: string;
+  timestamp: Date;
+}
+
+export interface SwapInitiatedEvent {
+  type: 'swapInitiated';
+  data: SwapOrder;
   timestamp: Date;
 }
 
@@ -235,6 +242,7 @@ class SolverService {
     onSwapUpdate?: (event: SwapUpdateEvent) => void;
     onSwapCompleted?: (event: SwapCompletedEvent) => void;
     onSwapCancelled?: (event: SwapCancelledEvent) => void;
+    onSwapInitiated?: (event: SwapInitiatedEvent) => void;
     onError?: (error: SolverErrorEvent) => void;
   }): Socket {
     if (this.socket?.connected) {
@@ -266,6 +274,10 @@ class SolverService {
 
     if (callbacks?.onSwapCancelled) {
       this.socket.on('swapCancelled', callbacks.onSwapCancelled);
+    }
+
+    if (callbacks?.onSwapInitiated) {
+      this.socket.on('swapInitiated', callbacks.onSwapInitiated);
     }
 
     if (callbacks?.onError) {

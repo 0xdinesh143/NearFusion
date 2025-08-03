@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { ArrowUpDown, Loader, AlertCircle, CheckCircle, Clock } from "lucide-react";
+import { ArrowUpDown, Loader, AlertCircle } from "lucide-react";
 import Link from "next/link";
 import { Geist_Mono } from "next/font/google";
 import Image from "next/image";
@@ -11,17 +11,18 @@ import { setupMeteorWallet } from "@near-wallet-selector/meteor-wallet";
 import { setupHereWallet } from "@near-wallet-selector/here-wallet";
 import { setupMyNearWallet } from "@near-wallet-selector/my-near-wallet";
 import { useAppKit } from "@reown/appkit/react";
-import { useAccount, useBalance } from "wagmi";
+import { useAccount, useBalance, useSendTransaction, useWaitForTransactionReceipt } from "wagmi";
+import { parseEther } from "viem";
 import { 
   solverService, 
   SwapOrder, 
   SwapStatus, 
   SwapRequest, 
   SwapUpdateEvent, 
-  SwapCompletedEvent, 
-  SwapCancelledEvent, 
   SolverErrorEvent 
 } from "../lib/solverService";
+import { showToast } from "../lib/toast";
+import { EVM_FACTORY_ADDRESS, NEAR_FACTORY_ADDRESS } from "../constants";
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
@@ -67,7 +68,18 @@ export default function SwapPage() {
   // Swap execution state
   const [isSwapping, setIsSwapping] = useState(false);
   const [swapError, setSwapError] = useState<string | null>(null);
-  const [currentSwap, setCurrentSwap] = useState<SwapOrder | null>(null);
+
+  // Transfer state
+  const [isTransferring, setIsTransferring] = useState(false);
+  const [transferHash, setTransferHash] = useState<string | null>(null);
+
+  // ETH transfer hooks
+  const { sendTransaction, data: txHash, isPending: isTxPending } = useSendTransaction();
+  const { isLoading: isTxLoading, isSuccess: isTxSuccess } = useWaitForTransactionReceipt({
+    hash: txHash,
+  });
+
+  console.log('txHash', txHash);
 
   // Fetch token prices from our API route
   const fetchTokenPrices = async () => {
@@ -133,6 +145,92 @@ export default function SwapPage() {
     }
   }, [nearAddress, isNEARConnected]);
 
+  // ETH Transfer Function
+  const executeETHTransfer = async (amount: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      let resolved = false;
+      
+      const handleTxHash = (hash: string) => {
+        if (!resolved) {
+          resolved = true;
+          console.log('txHash received:', hash);
+          showToast('⏳ Transfer Pending', 'ETH transfer submitted, waiting for confirmation...', 'info');
+          setTransferHash(hash);
+          resolve(hash);
+        }
+      };
+
+      const handleError = (error: Error) => {
+        if (!resolved) {
+          resolved = true;
+          console.error('ETH transfer failed:', error);
+          setIsTransferring(false);
+          reject(error);
+        }
+      };
+
+      try {
+        setIsTransferring(true);
+        showToast('💸 Initiating ETH Transfer', 'Transferring ETH to escrow factory...', 'info');
+
+        // Store the resolve function to be called when txHash updates
+        (window as any).pendingETHTransferResolve = handleTxHash;
+        (window as any).pendingETHTransferReject = handleError;
+
+        // Trigger the transaction
+        sendTransaction({
+          to: EVM_FACTORY_ADDRESS as `0x${string}`,
+          value: parseEther(amount),
+        });
+
+        // Timeout after 30 seconds
+        setTimeout(() => {
+          handleError(new Error('Transaction hash timeout'));
+        }, 30000);
+
+      } catch (error) {
+        handleError(new Error(error instanceof Error ? error.message : 'ETH transfer failed'));
+      }
+    });
+  };
+
+  // NEAR Transfer Function
+  const executeNEARTransfer = async (amount: string): Promise<string> => {
+    try {
+      if (!nearSelector || !nearAddress) {
+        throw new Error('NEAR wallet not connected');
+      }
+
+      setIsTransferring(true);
+      showToast('💸 Initiating NEAR Transfer', 'Transferring NEAR to escrow factory...', 'info');
+
+      const wallet = await nearSelector.wallet();
+      const amountInYocto = (parseFloat(amount) * 1e24).toString();
+
+      const result = await wallet.signAndSendTransaction({
+        signerId: nearAddress,
+        receiverId: NEAR_FACTORY_ADDRESS,
+        actions: [
+          {
+            type: 'Transfer',
+            params: {
+              deposit: amountInYocto,
+            },
+          },
+        ],
+      });
+
+      showToast('✅ NEAR Transfer Complete', 'NEAR transfer completed successfully', 'success');
+      setTransferHash(result.transaction.hash);
+      
+      return result.transaction.hash;
+    } catch (error) {
+      console.error('NEAR transfer failed:', error);
+      setIsTransferring(false);
+      throw new Error(error instanceof Error ? error.message : 'NEAR transfer failed');
+    }
+  };
+
   // Initialize NEAR wallet selector and check for existing connections
   useEffect(() => {
     const initializeNearWallet = async () => {
@@ -163,7 +261,6 @@ export default function SwapPage() {
         });
 
         selector.on("signedOut", () => {
-          console.log("NEAR wallet disconnected");
           setIsNEARConnected(false);
           setNearAddress("");
           setNearBalance("0");
@@ -189,6 +286,15 @@ export default function SwapPage() {
     }
   }, [nearAddress, isNEARConnected, fetchNearBalance]);
 
+  // Handle ETH transaction hash availability
+  useEffect(() => {
+    if (txHash && (window as any).pendingETHTransferResolve) {
+      (window as any).pendingETHTransferResolve(txHash);
+      delete (window as any).pendingETHTransferResolve;
+      delete (window as any).pendingETHTransferReject;
+    }
+  }, [txHash]);
+
   // Fetch prices on component mount and setup WebSocket
   useEffect(() => {
     fetchTokenPrices();
@@ -198,29 +304,57 @@ export default function SwapPage() {
     // Setup WebSocket for real-time swap updates
     solverService.connectWebSocket({
       onSwapUpdate: (event: SwapUpdateEvent) => {
-        console.log('Swap update:', event);
-        if (currentSwap && event.swapId === currentSwap.id) {
-          setCurrentSwap(event.data as SwapOrder);
-        }
+        console.log('🎉 Swap Update', event);
+          // Show toast notifications for different stages
+          const swap = event.data as SwapOrder;
+          switch (swap.status) {
+            case SwapStatus.CREATED:
+              showToast('🚀 Swap Initiated', 'Cross-chain swap has been initiated', 'info');
+              break;
+            case SwapStatus.FIRST_LEG_PENDING:
+              showToast('⏳ Processing Source', 'Creating source escrow...', 'info');
+              break;
+            case SwapStatus.FIRST_LEG_COMPLETED:
+              showToast('✅ Source Complete', 'Source escrow created successfully', 'success');
+              break;
+            case SwapStatus.SECOND_LEG_PENDING:
+              showToast('⏳ Processing Destination', 'Creating destination escrow...', 'info');
+              break;
+            case SwapStatus.SECOND_LEG_COMPLETED:
+              showToast('✅ Destination Complete', 'Destination escrow created successfully', 'success');
+              break;
+            case SwapStatus.COMPLETING:
+              showToast('🔄 Finalizing Swap', 'Revealing secret and completing transfer...', 'info');
+              break;
+            case SwapStatus.COMPLETED:
+              showToast('🎉 Swap Completed', 'Cross-chain swap completed successfully!', 'success');
+              break;
+            case SwapStatus.FAILED:
+              showToast('❌ Swap Failed', swap.error || 'Swap failed unexpectedly', 'error');
+              break;
+          }
+        
       },
-      onSwapCompleted: (event: SwapCompletedEvent) => {
-        console.log('Swap completed:', event);
-        if (currentSwap && event.data.swapId === currentSwap.id) {
-          setCurrentSwap((prev) => prev ? { ...prev, status: SwapStatus.COMPLETED } : null);
+      onSwapCompleted: () => {
+        showToast('🎉 Swap Completed', 'Cross-chain swap completed successfully!', 'success');
           setIsSwapping(false);
-        }
+          // Refresh balances after successful swap
+          fetchNearBalance();
+        
       },
-      onSwapCancelled: (event: SwapCancelledEvent) => {
-        console.log('Swap cancelled:', event);
-        if (currentSwap && event.data.swapId === currentSwap.id) {
-          setCurrentSwap((prev) => prev ? { ...prev, status: SwapStatus.CANCELLED } : null);
+      onSwapCancelled: () => {
+         showToast('❌ Swap Cancelled', 'Your swap has been cancelled', 'error');
           setIsSwapping(false);
-        }
+        
       },
       onError: (error: SolverErrorEvent) => {
-        console.error('Solver error:', error);
+        console.error('🚨 Solver error:', error);
+        showToast('🚨 System Error', error.error || 'An unexpected error occurred', 'error');
         setSwapError(error.error || 'Unknown error occurred');
         setIsSwapping(false);
+      },
+      onSwapInitiated: () => {
+        showToast('🚀 Swap Initiated', 'Cross-chain swap has been initiated successfully!', 'info');
       }
     });
 
@@ -228,7 +362,7 @@ export default function SwapPage() {
       clearInterval(interval);
       solverService.disconnectWebSocket();
     };
-  }, [currentSwap]);
+  }, [ fetchNearBalance]);
 
   // Helper function to normalize decimal input (handle both comma and dot)
   const normalizeDecimalInput = (value: string): string => {
@@ -244,7 +378,6 @@ export default function SwapPage() {
   };
 
   const handleFromAmountChange = (value: string) => {
-    console.log('handleFromAmountChange', value);
     setFromAmount(value); // Keep original user input (with comma if they typed it)
     
     const numericValue = parseAmount(value);
@@ -321,7 +454,24 @@ export default function SwapPage() {
     setSwapError(null);
 
     try {
-      // Map token symbols to chain addresses  
+      // Step 1: Execute the required transfer based on source token
+      let transferTxHash: string;
+
+      if (fromToken === "ETH") {
+        // Transfer ETH to escrow factory
+        transferTxHash = await executeETHTransfer(fromAmount);
+        
+        
+      } else {
+        // Transfer NEAR to escrow factory
+        transferTxHash = await executeNEARTransfer(fromAmount);
+      }
+
+      // Step 2: Wait a moment for transfer to be processed
+      showToast('🔄 Processing Transfer', 'Transfer completed, proceeding with swap...', 'info');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Step 3: Proceed with solver service
       const sourceChain = fromToken === "ETH" ? "base-sepolia" : "near";
       const destinationChain = toToken === "ETH" ? "base-sepolia" : "near";
       
@@ -338,41 +488,31 @@ export default function SwapPage() {
         destinationAmount: toAmount,
         userAddress: fromToken === "ETH" ? ethAddress : nearAddress,
         recipientAddress: toToken === "ETH" ? ethAddress : nearAddress,
-        slippageTolerance: 1.0
+        slippageTolerance: 1.0,
+        // Include the transfer transaction hash for reference
+        transferTxHash
       };
 
-      console.log('Executing swap:', swapRequest);
+      showToast('🚀 Starting Cross-Chain Swap', 'Initiating cross-chain swap with solver...', 'info');
 
       const result = await solverService.executeSwap(swapRequest);
-      console.log('Swap result:', result);
-
-      // Get the swap details
-      const swapOrder = await solverService.getSwapStatus(result.swapId);
-      setCurrentSwap(swapOrder);
 
       // Subscribe to updates for this swap
       solverService.subscribeToSwap(result.swapId);
+
+      // Reset transfer state
+      setIsTransferring(false);
+      setTransferHash(null);
 
     } catch (error) {
       console.error('Swap execution failed:', error);
       setSwapError(error instanceof Error ? error.message : 'Swap execution failed');
       setIsSwapping(false);
+      setIsTransferring(false);
     }
   }
 
-  // Cancel current swap
-  async function handleCancelSwap() {
-    if (!currentSwap) return;
 
-    try {
-      await solverService.cancelSwap(currentSwap.id);
-      setCurrentSwap(null);
-      setIsSwapping(false);
-    } catch (error) {
-      console.error('Failed to cancel swap:', error);
-      setSwapError(error instanceof Error ? error.message : 'Failed to cancel swap');
-    }
-  }
 
   const getTokenIcon = (token: string) => {
     return token === "ETH"
@@ -395,33 +535,7 @@ export default function SwapPage() {
     return value > 0 ? `$${Number(value).toFixed(2)}` : '$0.00';
   };
 
-  // Get swap status display info
-  const getSwapStatusInfo = (status: SwapStatus) => {
-    switch (status) {
-      case SwapStatus.CREATED:
-        return { text: "Created", icon: Clock, color: "text-blue-400" };
-      case SwapStatus.FIRST_LEG_PENDING:
-        return { text: "First leg pending", icon: Loader, color: "text-yellow-400" };
-      case SwapStatus.FIRST_LEG_COMPLETED:
-        return { text: "First leg completed", icon: CheckCircle, color: "text-green-400" };
-      case SwapStatus.SECOND_LEG_PENDING:
-        return { text: "Second leg pending", icon: Loader, color: "text-yellow-400" };
-      case SwapStatus.SECOND_LEG_COMPLETED:
-        return { text: "Second leg completed", icon: CheckCircle, color: "text-green-400" };
-      case SwapStatus.COMPLETING:
-        return { text: "Completing", icon: Loader, color: "text-blue-400" };
-      case SwapStatus.COMPLETED:
-        return { text: "Completed", icon: CheckCircle, color: "text-green-400" };
-      case SwapStatus.CANCELLING:
-        return { text: "Cancelling", icon: Loader, color: "text-orange-400" };
-      case SwapStatus.CANCELLED:
-        return { text: "Cancelled", icon: AlertCircle, color: "text-orange-400" };
-      case SwapStatus.FAILED:
-        return { text: "Failed", icon: AlertCircle, color: "text-red-400" };
-      default:
-        return { text: "Unknown", icon: AlertCircle, color: "text-gray-400" };
-    }
-  };
+
 
   return (
     <div
@@ -586,69 +700,18 @@ export default function SwapPage() {
           </div>
         )}
 
-        {/* Current Swap Status */}
-        {currentSwap && (
-          <div className="bg-gray-800 rounded-xl p-4 mt-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-lg font-semibold">Current Swap</h3>
-              {currentSwap.status !== SwapStatus.COMPLETED && 
-               currentSwap.status !== SwapStatus.CANCELLED && 
-               currentSwap.status !== SwapStatus.FAILED && (
-                <button
-                  onClick={handleCancelSwap}
-                  className="text-red-400 hover:text-red-300 text-sm"
-                >
-                  Cancel
-                </button>
-              )}
-            </div>
-            
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-gray-400">Swap ID:</span>
-                <span className="font-mono text-xs">{currentSwap.id.slice(0, 8)}...</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Amount:</span>
-                <span>{currentSwap.amount} {fromToken} → {currentSwap.destinationAmount} {toToken}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400">Status:</span>
-                <div className="flex items-center gap-2">
-                  {(() => {
-                    const statusInfo = getSwapStatusInfo(currentSwap.status);
-                    const IconComponent = statusInfo.icon;
-                    return (
-                      <>
-                        <IconComponent className={`w-4 h-4 ${statusInfo.color} ${statusInfo.icon === Loader ? 'animate-spin' : ''}`} />
-                        <span className={statusInfo.color}>{statusInfo.text}</span>
-                      </>
-                    );
-                  })()}
-                </div>
-              </div>
-              {currentSwap.error && (
-                <div className="flex justify-between">
-                  <span className="text-gray-400">Error:</span>
-                  <span className="text-red-400 text-xs">{currentSwap.error}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
         {/* Swap Button */}
         {isETHConnected && isNEARConnected ? (
           <button 
             onClick={handleSwapExecution}
-            disabled={isSwapping || !fromAmount || !toAmount}
+            disabled={isSwapping || isTransferring || isTxPending || isTxLoading || !fromAmount || !toAmount}
             className={`w-full mt-6 font-semibold py-4 rounded-xl transition-all flex items-center justify-center gap-2 ${
-              isSwapping || !fromAmount || !toAmount
+              isSwapping || isTransferring || isTxPending || isTxLoading || !fromAmount || !toAmount
                 ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
                 : 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
             }`}
           >
-            {isSwapping ? (
+            {isSwapping || isTransferring || isTxPending || isTxLoading ? (
               <>
                 <Loader className="w-5 h-5 animate-spin" />
                 Swapping...

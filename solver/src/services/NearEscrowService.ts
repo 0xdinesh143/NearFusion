@@ -103,10 +103,8 @@ export class NearEscrowService extends EventEmitter {
         immutables: {
           hashlock: immutables.hashlock,
           timelocks: {
-            src_lock_time: immutables.timelocks.src_lock_time,
-            dst_lock_time: immutables.timelocks.dst_lock_time,
-            src_unlock_time: immutables.timelocks.src_unlock_time,
-            dst_unlock_time: immutables.timelocks.dst_unlock_time
+            withdrawalPeriod: immutables.timelocks.withdrawalPeriod,
+            cancellationPeriod: immutables.timelocks.cancellationPeriod
           },
           src_token: immutables.src_token,
           dst_token: immutables.dst_token,

@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import * as crypto from "crypto";
 
 import { CryptoUtils } from '../utils/CryptoUtils';
 import { EVMEscrowService } from './EVMEscrowService';
@@ -13,6 +14,7 @@ import {
   NearEscrowImmutables,
   Timelocks 
 } from '../types';
+import { ethers } from 'ethers';
 
 export interface SwapServiceConfig {
   defaultTimelock: number;
@@ -116,7 +118,8 @@ export class SwapService extends EventEmitter {
           await this.evmEscrowService.cancelEscrow(
             swap.sourceChain as ChainId,
             swap.sourceEscrowAddress,
-            swap.evmImmutables!
+            swap.evmImmutables!,
+            swap.id
           );
         } else {
           await this.nearEscrowService.cancelEscrow(swap.sourceEscrowAddress);
@@ -128,7 +131,8 @@ export class SwapService extends EventEmitter {
           await this.evmEscrowService.cancelEscrow(
             swap.destinationChain as ChainId,
             swap.destinationEscrowAddress,
-            swap.evmImmutables!
+            swap.evmImmutables!,
+            swap.id
           );
         } else {
           await this.nearEscrowService.cancelEscrow(swap.destinationEscrowAddress);
@@ -196,16 +200,16 @@ export class SwapService extends EventEmitter {
 
   private async generateSwapOrder(request: SwapRequest): Promise<SwapOrder> {
     // Generate secret and hashlock
-    const secret = CryptoUtils.generateSecret();
-    const hashlock = CryptoUtils.createHashlock(secret);
+    // const secret = CryptoUtils.generateSecret();
+     // Generate secure random secret
+    const secretBytes = crypto.randomBytes(32);
+    const secret = "0x" + secretBytes.toString("hex");
+    const hashlock = ethers.sha256(secret);
 
     // Generate timelocks
-    const currentTime = Math.floor(Date.now() / 1000);
     const timelocks: Timelocks = {
-      src_lock_time: currentTime + this.config.defaultTimelock,
-      dst_lock_time: currentTime + this.config.defaultTimelock / 2,
-      src_unlock_time: currentTime + this.config.defaultTimelock * 2,
-      dst_unlock_time: currentTime + this.config.defaultTimelock * 3
+      withdrawalPeriod: 0,     // IMMEDIATE WITHDRAWAL
+      cancellationPeriod: 3600, // 1 hour cancellation period
     };
 
     const swapOrder: SwapOrder = {
@@ -304,10 +308,10 @@ export class SwapService extends EventEmitter {
 
       // Create source escrow based on source chain
       if (this.isEVMChain(swap.sourceChain)) {
-        escrowAddress = await this.evmEscrowService.createEscrow(
+        escrowAddress = await this.evmEscrowService.createSrcEscrow(
           swap.sourceChain as ChainId,
           swap.evmImmutables!,
-          'source'
+          swap.id
         );
       } else {
         escrowAddress = await this.nearEscrowService.createSrcEscrow(
@@ -361,12 +365,13 @@ export class SwapService extends EventEmitter {
       if (this.isEVMChain(swap.destinationChain)) {
         escrowAddress = await this.evmEscrowService.createDstEscrow(
           swap.destinationChain as ChainId,
-          swap.evmImmutables!
+          swap.evmImmutables!,
+          swap.id
         );
       } else {
         escrowAddress = await this.nearEscrowService.createDstEscrow(
-          swap.nearImmutables!
-        );
+          swap.nearImmutables!,
+          );
       }
 
       // Update swap with escrow address
@@ -429,7 +434,8 @@ export class SwapService extends EventEmitter {
           swap.destinationChain as ChainId,
           swap.destinationEscrowAddress!,
           secret,
-          swap.evmImmutables!
+          swap.evmImmutables!,
+          swap.id
         );
       } else {
         result.destinationTransaction = await this.nearEscrowService.withdrawFunds(
@@ -445,7 +451,8 @@ export class SwapService extends EventEmitter {
           swap.sourceChain as ChainId,
           swap.sourceEscrowAddress!,
           secret,
-          swap.evmImmutables!
+          swap.evmImmutables!,
+          swap.id
         );
       } else {
         result.sourceTransaction = await this.nearEscrowService.withdrawFunds(

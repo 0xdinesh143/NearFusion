@@ -7,6 +7,16 @@ use schemars::{JsonSchema, gen::SchemaGenerator, schema::{Schema, SchemaObject}}
 // Type alias for compatibility
 pub type Balance = u128;
 
+/// Type of escrow contract - determines permissions and behavior
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, Debug, JsonSchema)]
+#[serde(crate = "near_sdk::serde")]
+pub enum EscrowType {
+    /// Source escrow for EVM→NEAR swaps (maker withdraws, taker cancels/rescues)
+    Source,
+    /// Destination escrow for NEAR→EVM swaps (taker withdraws, maker cancels/rescues)
+    Destination,
+}
+
 /// Immutable parameters for escrow contracts that match EVM structure
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, Debug)]
 #[serde(crate = "near_sdk::serde")]

@@ -1,10 +1,38 @@
 import type { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox-viem";
 import "@nomicfoundation/hardhat-verify";
+import { defineChain } from "viem";
 
 // Load environment variables
 import * as dotenv from "dotenv";
 dotenv.config();
+
+// Define Base Sepolia chain to avoid conflicts with viem's built-in chains
+const baseSepolia = defineChain({
+  id: 84532,
+  name: 'Base Sepolia',
+  network: 'base-sepolia',
+  nativeCurrency: {
+    decimals: 18,
+    name: 'Sepolia Ether',
+    symbol: 'ETH',
+  },
+  rpcUrls: {
+    default: {
+      http: ['https://sepolia.base.org'],
+    },
+    public: {
+      http: ['https://sepolia.base.org'],
+    },
+  },
+  blockExplorers: {
+    default: {
+      name: 'Basescan',
+      url: 'https://sepolia.basescan.org',
+    },
+  },
+  testnet: true,
+});
 
 const config: HardhatUserConfig = {
   solidity: {
@@ -17,7 +45,7 @@ const config: HardhatUserConfig = {
     },
   },
   networks: {
-    hardhat: {
+    hardhat: {  
       chainId: 1337,
     },
     "base-sepolia": {

@@ -3,9 +3,8 @@ resolver = "2"
 
 members = [
     "contracts/shared",
-    "contracts/escrow-factory",
-    "contracts/escrow-src",
-    "contracts/escrow-dst",
+    "contracts/escrow",
+    "contracts/factory",
 ]
 
 [workspace.dependencies]

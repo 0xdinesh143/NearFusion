@@ -12,18 +12,712 @@ import {
 
 // Contract ABIs
 const ESCROW_FACTORY_ABI = [
-  // Factory interface
-  'function createDstEscrow(tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, tuple(uint256 srcLockTime, uint256 dstLockTime, uint256 srcUnlockTime, uint256 dstUnlockTime) timelocks) dstImmutables) external payable',
-  'function addressOfEscrowDst(tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, tuple(uint256 srcLockTime, uint256 dstLockTime, uint256 srcUnlockTime, uint256 dstUnlockTime) timelocks) immutables) external view returns (address)',
-  'function ESCROW_DST_IMPLEMENTATION() external view returns (address)',
-  'event DstEscrowCreated(address escrow, bytes32 hashlock, address taker, address indexed creator, uint8 creatorType)'
-];
-
+  {
+    "inputs": [
+      {
+        "internalType": "contract IERC20",
+        "name": "accessToken",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "owner",
+        "type": "address"
+      },
+      {
+        "internalType": "uint32",
+        "name": "rescueDelaySrc",
+        "type": "uint32"
+      },
+      {
+        "internalType": "uint32",
+        "name": "rescueDelayDst",
+        "type": "uint32"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_creationFee",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "_treasury",
+        "type": "address"
+      },
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "minConfirmations",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "dustThreshold",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct BTCEscrowFactory.BitcoinConfig",
+        "name": "_bitcoinConfig",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "inputs": [],
+    "name": "Create2EmptyBytecode",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "FailedDeployment",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "FeeTransferFailed",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "balance",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "needed",
+        "type": "uint256"
+      }
+    ],
+    "name": "InsufficientBalance",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InsufficientEscrowBalance",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidBitcoinAddress",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidBitcoinAmount",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidFeeAmount",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "owner",
+        "type": "address"
+      }
+    ],
+    "name": "OwnableInvalidOwner",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "OwnableUnauthorizedAccount",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "token",
+        "type": "address"
+      }
+    ],
+    "name": "SafeERC20FailedOperation",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "minConfirmations",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "dustThreshold",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          }
+        ],
+        "indexed": false,
+        "internalType": "struct BTCEscrowFactory.BitcoinConfig",
+        "name": "config",
+        "type": "tuple"
+      }
+    ],
+    "name": "BitcoinConfigUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "oldFee",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "newFee",
+        "type": "uint256"
+      }
+    ],
+    "name": "CreationFeeUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "escrow",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "hashlock",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "Address",
+        "name": "taker",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "creator",
+        "type": "address"
+      }
+    ],
+    "name": "DstEscrowCreated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "previousOwner",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "newOwner",
+        "type": "address"
+      }
+    ],
+    "name": "OwnershipTransferred",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "escrow",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "hashlock",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "Address",
+        "name": "maker",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "creator",
+        "type": "address"
+      }
+    ],
+    "name": "SrcEscrowCreated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "oldTreasury",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "newTreasury",
+        "type": "address"
+      }
+    ],
+    "name": "TreasuryUpdated",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "ACCESS_TOKEN",
+    "outputs": [
+      {
+        "internalType": "contract IERC20",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "BTC_ESCROW_DST_IMPLEMENTATION",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "BTC_ESCROW_SRC_IMPLEMENTATION",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "orderHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "hashlock",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "Address",
+            "name": "maker",
+            "type": "uint256"
+          },
+          {
+            "internalType": "Address",
+            "name": "taker",
+            "type": "uint256"
+          },
+          {
+            "internalType": "Address",
+            "name": "token",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "safetyDeposit",
+            "type": "uint256"
+          },
+          {
+            "internalType": "Timelocks",
+            "name": "timelocks",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct IBaseEscrow.Immutables",
+        "name": "immutables",
+        "type": "tuple"
+      }
+    ],
+    "name": "addressOfEscrowDst",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "orderHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "hashlock",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "Address",
+            "name": "maker",
+            "type": "uint256"
+          },
+          {
+            "internalType": "Address",
+            "name": "taker",
+            "type": "uint256"
+          },
+          {
+            "internalType": "Address",
+            "name": "token",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "safetyDeposit",
+            "type": "uint256"
+          },
+          {
+            "internalType": "Timelocks",
+            "name": "timelocks",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct IBaseEscrow.Immutables",
+        "name": "immutables",
+        "type": "tuple"
+      }
+    ],
+    "name": "addressOfEscrowSrc",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "bitcoinConfig",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "minConfirmations",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "dustThreshold",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "maxAmount",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "orderHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "hashlock",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "Address",
+            "name": "maker",
+            "type": "uint256"
+          },
+          {
+            "internalType": "Address",
+            "name": "taker",
+            "type": "uint256"
+          },
+          {
+            "internalType": "Address",
+            "name": "token",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "safetyDeposit",
+            "type": "uint256"
+          },
+          {
+            "internalType": "Timelocks",
+            "name": "timelocks",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct IBaseEscrow.Immutables",
+        "name": "immutables",
+        "type": "tuple"
+      }
+    ],
+    "name": "createDstEscrow",
+    "outputs": [],
+    "stateMutability": "payable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "orderHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "hashlock",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "Address",
+            "name": "maker",
+            "type": "uint256"
+          },
+          {
+            "internalType": "Address",
+            "name": "taker",
+            "type": "uint256"
+          },
+          {
+            "internalType": "Address",
+            "name": "token",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "amount",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "safetyDeposit",
+            "type": "uint256"
+          },
+          {
+            "internalType": "Timelocks",
+            "name": "timelocks",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct IBaseEscrow.Immutables",
+        "name": "immutables",
+        "type": "tuple"
+      }
+    ],
+    "name": "createSrcEscrow",
+    "outputs": [],
+    "stateMutability": "payable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "creationFee",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "owner",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "renounceOwnership",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "minConfirmations",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "dustThreshold",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "maxAmount",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct BTCEscrowFactory.BitcoinConfig",
+        "name": "newConfig",
+        "type": "tuple"
+      }
+    ],
+    "name": "setBitcoinConfig",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "newFee",
+        "type": "uint256"
+      }
+    ],
+    "name": "setCreationFee",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "newTreasury",
+        "type": "address"
+      }
+    ],
+    "name": "setTreasury",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "newOwner",
+        "type": "address"
+      }
+    ],
+    "name": "transferOwnership",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "treasury",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]
 const ESCROW_ABI = [
   // Escrow interface
-  'function withdraw(bytes32 secret, tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, tuple(uint256 srcLockTime, uint256 dstLockTime, uint256 srcUnlockTime, uint256 dstUnlockTime) timelocks) immutables) external',
-  'function cancel(tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, tuple(uint256 srcLockTime, uint256 dstLockTime, uint256 srcUnlockTime, uint256 dstUnlockTime) timelocks) immutables) external',
-  'function rescueFunds(address token, uint256 amount, tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, tuple(uint256 srcLockTime, uint256 dstLockTime, uint256 srcUnlockTime, uint256 dstUnlockTime) timelocks) immutables) external',
+  'function withdraw(bytes32 secret, tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, uint256 timelocks) immutables) external',
+  'function cancel(tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, uint256 timelocks) immutables) external',
+  'function rescueFunds(address token, uint256 amount, tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, uint256 timelocks) immutables) external',
   'function RESCUE_DELAY() external view returns (uint256)',
   'function FACTORY() external view returns (address)',
   'event EscrowWithdrawal(bytes32 secret)',
@@ -75,7 +769,7 @@ export class EVMEscrowService extends EventEmitter {
   /**
    * Create destination escrow for NEAR→EVM swaps
    */
-  async createDstEscrow(chainId: ChainId, immutables: EscrowImmutables): Promise<string> {
+  async createDstEscrow(chainId: ChainId, immutables: EscrowImmutables, swapId: string): Promise<string> {
     try {
       console.log(`Creating EVM destination escrow on chain: ${chainId}`);
 
@@ -86,7 +780,7 @@ export class EVMEscrowService extends EventEmitter {
       }
 
       // Format immutables for contract call
-      const contractImmutables = this.formatImmutablesForContract(immutables);
+      const contractImmutables = this.formatImmutablesForContract(immutables,chainId, swapId);
       
       // Calculate required safety deposit (typically for gas costs)
       const safetyDeposit = this.calculateSafetyDeposit(immutables);
@@ -94,17 +788,23 @@ export class EVMEscrowService extends EventEmitter {
       // Add safety deposit to immutables
       contractImmutables.safetyDeposit = safetyDeposit;
 
+      // Get creation fee from contract
+      const creationFee = await factory.creationFee();
+      
+     
+      
+      const valueToSend = creationFee + safetyDeposit + contractImmutables.amount;
       
       // Create destination escrow
       const tx = await factory.createDstEscrow(
         contractImmutables,
-        { value: safetyDeposit + BigInt(contractImmutables.amount) }
+        { value: valueToSend }
       );
 
       console.log('tx', tx);
       
       const receipt = await tx.wait();
-      const escrowAddress = this.parseEscrowCreatedEvent(receipt);
+      const escrowAddress = this.parseEscrowCreatedEvent(receipt, 'destination');
       
       // Initialize escrow contract instance
       await this.initializeEscrowContract(escrowAddress);
@@ -121,17 +821,63 @@ export class EVMEscrowService extends EventEmitter {
   }
 
   /**
-   * Generic escrow creation method - defaults to destination for EVM
+   * Create source escrow for EVM→NEAR swaps
    */
-  async createEscrow(chainId: ChainId, immutables: EscrowImmutables, type: 'source' | 'destination' = 'destination'): Promise<string> {
-    // For EVM chains, we primarily create destination escrows for NEAR→EVM swaps
-    return this.createDstEscrow(chainId, immutables);
+  async createSrcEscrow(chainId: ChainId, immutables: EscrowImmutables, swapId: string): Promise<string> {
+    try {
+      const factory = this.factoryContracts.get(chainId);
+
+
+      if (!factory) {
+        throw new SolverError(`No factory contract for chain ${chainId}`, SolverErrorCode.CONTRACT_ERROR, chainId);
+      }
+
+      const contractImmutables = this.formatImmutablesForContract(immutables, chainId, swapId);
+
+      // Calculate required safety deposit
+      const safetyDeposit = this.calculateSafetyDeposit(immutables);
+      
+      // Add safety deposit to immutables
+      contractImmutables.safetyDeposit = safetyDeposit;
+      
+      const creationFee = await factory.creationFee();
+      
+      const valueToSend = creationFee + safetyDeposit + contractImmutables.amount;
+
+      const feeData = await this.providers.get(chainId)?.getFeeData();
+      const baseGasPrice = feeData?.gasPrice || ethers.parseUnits("2", "gwei");
+      const highGasPrice = baseGasPrice * 10n; 
+
+      // Create source escrow
+      const tx = await factory.createSrcEscrow(
+        contractImmutables,
+        { value: valueToSend , gasPrice: highGasPrice }
+      );
+
+      
+      
+      const receipt = await tx.wait();
+      const escrowAddress = this.parseEscrowCreatedEvent(receipt, 'source');
+      
+      // Initialize escrow contract instance
+      await this.initializeEscrowContract(escrowAddress);
+      
+      console.log(`EVM source escrow created on ${chainId}: ${escrowAddress}`);
+      this.emit('escrowCreated', { chainId, address: escrowAddress, type: 'source' });
+      
+      return escrowAddress;
+      
+    } catch (error) {
+      console.error(`Failed to create EVM source escrow on ${chainId}:`, error);
+      throw new SolverError('Failed to create source escrow', SolverErrorCode.ESCROW_CREATION_FAILED, chainId);
+    }
   }
+
 
   /**
    * Withdraw funds from escrow using secret
    */
-  async withdrawFunds(chainId: ChainId, escrowAddress: string, secret: string, immutables: EscrowImmutables): Promise<string> {
+  async withdrawFunds(chainId: ChainId, escrowAddress: string, secret: string, immutables: EscrowImmutables, swapId: string): Promise<string> {
     try {
       console.log(`Withdrawing funds from EVM escrow on ${chainId}: ${escrowAddress}`);
 
@@ -146,7 +892,7 @@ export class EVMEscrowService extends EventEmitter {
       }
 
       // Format immutables for contract call
-      const contractImmutables = this.formatImmutablesForContract(immutables);
+      const contractImmutables = this.formatImmutablesForContract(immutables, chainId, swapId);
       
       // Convert secret to bytes32
       const secretBytes32 = ethers.keccak256(ethers.toUtf8Bytes(secret));
@@ -175,7 +921,7 @@ export class EVMEscrowService extends EventEmitter {
   /**
    * Cancel escrow and refund
    */
-  async cancelEscrow(chainId: ChainId, escrowAddress: string, immutables: EscrowImmutables): Promise<string> {
+  async cancelEscrow(chainId: ChainId, escrowAddress: string, immutables: EscrowImmutables, swapId: string  ): Promise<string> {
     try {
       console.log(`Cancelling EVM escrow on ${chainId}: ${escrowAddress}`);
 
@@ -189,8 +935,7 @@ export class EVMEscrowService extends EventEmitter {
       }
 
       // Format immutables for contract call
-      const contractImmutables = this.formatImmutablesForContract(immutables);
-      
+      const contractImmutables = this.formatImmutablesForContract(immutables,chainId, swapId);
       // Cancel escrow
       const tx = await escrow.cancel(contractImmutables);
       const receipt = await tx.wait();
@@ -214,22 +959,25 @@ export class EVMEscrowService extends EventEmitter {
   /**
    * Get the deterministic address of an escrow before deployment
    */
-  async getEscrowAddress(chainId: ChainId, immutables: EscrowImmutables): Promise<string> {
+  async getEscrowAddress(chainId: ChainId, immutables: EscrowImmutables, swapId: string, type: 'source' | 'destination' = 'destination'): Promise<string> {
     try {
       const factory = this.factoryContracts.get(chainId);
       if (!factory) {
         throw new SolverError(`No factory contract for chain ${chainId}`, SolverErrorCode.CONTRACT_ERROR, chainId);
       }
 
-      const contractImmutables = this.formatImmutablesForContract(immutables);
+      const contractImmutables = this.formatImmutablesForContract(immutables, chainId, swapId);
       contractImmutables.safetyDeposit = this.calculateSafetyDeposit(immutables);
       
-      const address = await factory.addressOfEscrowDst(contractImmutables);
+      const address = type === 'source' 
+        ? await factory.addressOfEscrowSrc(contractImmutables)
+        : await factory.addressOfEscrowDst(contractImmutables);
+      
       return address;
       
     } catch (error) {
-      console.error(`Failed to get escrow address on ${chainId}:`, error);
-      throw new SolverError('Failed to get escrow address', SolverErrorCode.CONTRACT_ERROR, chainId);
+      console.error(`Failed to get ${type} escrow address on ${chainId}:`, error);
+      throw new SolverError(`Failed to get ${type} escrow address`, SolverErrorCode.CONTRACT_ERROR, chainId);
     }
   }
 
@@ -345,26 +1093,41 @@ export class EVMEscrowService extends EventEmitter {
   /**
    * Format immutables for contract calls
    */
-  private formatImmutablesForContract(immutables: EscrowImmutables): any {
+  private formatImmutablesForContract(immutables: EscrowImmutables, chainId: ChainId, orderId: string): any {
+    const wallet = this.wallets.get(chainId);
     // Validate and normalize addresses to prevent ENS resolution attempts
-    const makerAddress = this.validateAndNormalizeAddress(immutables.srcAddr);
-    const takerAddress = this.validateAndNormalizeAddress(immutables.dstAddr);
-    const tokenAddress = this.validateAndNormalizeAddress(immutables.dstToken);
+    const takerAddress = this.validateAndNormalizeAddress(immutables.srcAddr);
+    const makerAddress = this.validateAndNormalizeAddress(wallet?.address || "");
+    const tokenAddress = this.validateAndNormalizeAddress(immutables.srcToken);
+
+    // Pack timelocks according to TimelocksLib format
+    // TimelocksLib expects relative durations (seconds from deployment), not absolute timestamps
+    // Bits 224-255: deployment timestamp (will be set by contract during deployment)
+    // Bits 64-95: cancellation period (relative duration)
+    // Bits 32-63: public withdrawal period (relative duration) 
+    // Bits 0-31: withdrawal period (relative duration)
+    const now = Math.floor(Date.now() / 1000);
+    
+    // Create escrow immutables
+    const dstWithdrawal = immutables.timelocks.withdrawalPeriod;
+    const dstPublicWithdrawal = immutables.timelocks.withdrawalPeriod * 2;
+    const dstCancellation = immutables.timelocks.cancellationPeriod;
+
+    // Pack timelocks
+    const timelocks = (BigInt(now) << 224n) |
+                    (BigInt(dstCancellation) << 64n) |
+                    (BigInt(dstPublicWithdrawal) << 32n) |
+                    BigInt(dstWithdrawal);
 
     return {
-      orderHash: immutables.hashlock, // Using hashlock as orderHash for simplicity
+      orderHash: ethers.keccak256(ethers.toUtf8Bytes(orderId)), // Using hashlock as orderHash for simplicity
       hashlock: immutables.hashlock,
-      maker: makerAddress,
-      taker: takerAddress,
-      token: tokenAddress,
-      amount: ethers.parseEther(immutables.amount),
+      maker: BigInt(makerAddress),
+      taker: BigInt(takerAddress),
+      token: BigInt(tokenAddress),
+      amount: ethers.parseEther(immutables.amount.toString()),
       safetyDeposit: BigInt(0), // Will be set separately
-      timelocks: {
-        srcLockTime: immutables.timelocks.src_lock_time,
-        dstLockTime: immutables.timelocks.dst_lock_time,
-        srcUnlockTime: immutables.timelocks.src_unlock_time,
-        dstUnlockTime: immutables.timelocks.dst_unlock_time
-      }
+      timelocks: timelocks
     };
   }
 
@@ -387,21 +1150,22 @@ export class EVMEscrowService extends EventEmitter {
   private calculateSafetyDeposit(immutables: EscrowImmutables): bigint {
     // Calculate safety deposit based on gas costs and security requirements
     // For testnet, use a minimal amount
-    return ethers.parseEther('0.00001'); // 0.001 ETH safety deposit
+    return ethers.parseEther('0.001'); // 0.001 ETH safety deposit
   }
 
   /**
    * Parse escrow created event from transaction receipt
    */
-  private parseEscrowCreatedEvent(receipt: ethers.TransactionReceipt): string {
+  private parseEscrowCreatedEvent(receipt: ethers.TransactionReceipt, type: 'source' | 'destination'): string {
     try {
       const factory = Array.from(this.factoryContracts.values())[0];
       if (!factory) {
         throw new Error('No factory contract available for event parsing');
       }
 
-      // Parse logs to find DstEscrowCreated event
+      // Parse logs to find the appropriate escrow created event
       const logs = receipt.logs.filter(log => log.address === factory.target);
+      const expectedEventName = type === 'source' ? 'SrcEscrowCreated' : 'DstEscrowCreated';
       
       for (const log of logs) {
         try {
@@ -410,7 +1174,7 @@ export class EVMEscrowService extends EventEmitter {
             data: log.data
           });
           
-          if (parsedLog && parsedLog.name === 'DstEscrowCreated') {
+          if (parsedLog && parsedLog.name === expectedEventName) {
             return parsedLog.args.escrow;
           }
         } catch (parseError) {
@@ -419,12 +1183,11 @@ export class EVMEscrowService extends EventEmitter {
         }
       }
       
-      throw new Error('DstEscrowCreated event not found in receipt');
+      throw new Error(`${expectedEventName} event not found in receipt`);
       
     } catch (error) {
-      console.error('Failed to parse escrow created event:', error);
-      // Return a placeholder for now - in production this should throw
-      throw new Error('Failed to parse escrow address from transaction receipt');
+      console.error(`Failed to parse ${type} escrow created event:`, error);
+      throw new Error(`Failed to parse ${type} escrow address from transaction receipt`);
     }
   }
 }

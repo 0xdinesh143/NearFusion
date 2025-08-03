@@ -7,22 +7,13 @@ use near_sdk::{
     PanicOnDefault, log,
 };
 
-use shared::{EscrowImmutables, EscrowError, calculate_storage_deposit, Balance};
+use shared::{EscrowImmutables, EscrowType, Balance};
 use schemars::{JsonSchema, gen::SchemaGenerator, schema::{Schema, SchemaObject}};
 
-/// Gas allocation for escrow contract deployment
-const GAS_FOR_ESCROW_DEPLOY: Gas = Gas::from_gas(50_000_000_000_000);
-/// Gas allocation for escrow initialization
-const GAS_FOR_ESCROW_INIT: Gas = Gas::from_gas(20_000_000_000_000);
+/// Gas allocation for escrow contract calls
+const GAS_FOR_ESCROW_CALL: Gas = Gas::from_gas(30_000_000_000_000);
 /// Minimum storage deposit for escrow creation
-const MIN_STORAGE_DEPOSIT: Balance = 1_000_000_000_000_000_000_000_000; // 1 NEAR
-
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, JsonSchema)]
-#[serde(crate = "near_sdk::serde")]
-pub enum EscrowType {
-    Source,      // For EVM→NEAR swaps
-    Destination, // For NEAR→EVM swaps
-}
+const MIN_STORAGE_DEPOSIT: Balance = 3_000_000_000_000_000_000_000_000; // 3 NEAR
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
@@ -67,9 +58,8 @@ pub struct EscrowFactory {
     pub creation_fee: Balance,
     /// Treasury account for collecting fees
     pub treasury: Option<AccountId>,
-    /// WASM code for escrow contracts
-    pub escrow_src_code: Vec<u8>,
-    pub escrow_dst_code: Vec<u8>,
+    /// Pre-deployed escrow contract account ID (used as template)
+    pub escrow_template: Option<AccountId>,
 }
 
 #[near_bindgen]
@@ -79,6 +69,7 @@ impl EscrowFactory {
         owner: AccountId,
         creation_fee: U128,
         treasury: Option<AccountId>,
+        escrow_template: Option<AccountId>,
     ) -> Self {
         Self {
             owner,
@@ -86,17 +77,16 @@ impl EscrowFactory {
             escrow_info: UnorderedMap::new(b"e"),
             creation_fee: creation_fee.0,
             treasury,
-            escrow_src_code: Vec::new(),
-            escrow_dst_code: Vec::new(),
+            escrow_template,
         }
     }
 
-    /// Update the WASM code for escrow contracts (owner only)
-    pub fn update_escrow_code(&mut self, src_code: Vec<u8>, dst_code: Vec<u8>) {
+    /// Update the escrow template contract (owner only)
+    pub fn set_escrow_template(&mut self, template: AccountId) {
         self.assert_owner();
-        self.escrow_src_code = src_code;
-        self.escrow_dst_code = dst_code;
-        log!("Escrow WASM code updated");
+        let template_clone = template.clone();
+        self.escrow_template = Some(template);
+        log!("Escrow template updated to: {}", template_clone);
     }
 
     /// Create a source escrow for EVM→NEAR swaps
@@ -113,6 +103,10 @@ impl EscrowFactory {
 
     /// Internal escrow creation logic
     fn create_escrow(&mut self, immutables: EscrowImmutables, escrow_type: EscrowType) -> Promise {
+        // Ensure template is set
+        let template = self.escrow_template.as_ref()
+            .expect("Escrow template not set");
+
         // Validate payment
         let attached_deposit = env::attached_deposit();
         let required_deposit = self.calculate_required_deposit(&immutables);
@@ -132,14 +126,6 @@ impl EscrowFactory {
         // Generate deterministic escrow account ID
         let escrow_account_id = self.generate_escrow_account_id(&immutables.order_hash, &escrow_type);
         
-        // Select WASM code based on escrow type
-        let code = match escrow_type {
-            EscrowType::Source => &self.escrow_src_code,
-            EscrowType::Destination => &self.escrow_dst_code,
-        };
-
-        assert!(!code.is_empty(), "Escrow WASM code not set");
-
         // Store escrow info
         let escrow_info = EscrowInfo {
             escrow_type: escrow_type.clone(),
@@ -148,7 +134,8 @@ impl EscrowFactory {
             created_at: env::block_timestamp(),
         };
 
-        self.order_to_escrow.insert(&immutables.order_hash, &escrow_account_id);
+        let order_hash_clone = immutables.order_hash.clone();
+        self.order_to_escrow.insert(&order_hash_clone, &escrow_account_id);
         self.escrow_info.insert(&escrow_account_id, &escrow_info);
 
         // Calculate amounts for escrow and fee
@@ -167,23 +154,100 @@ impl EscrowFactory {
             escrow_amount.as_yoctonear()
         );
 
-        // Deploy and initialize escrow contract
+        // Create new account and initialize with unified escrow
         Promise::new(escrow_account_id.clone())
             .create_account()
             .transfer(escrow_amount)
-            .deploy_contract(code.clone())
+            .add_full_access_key(env::signer_account_pk()) // Allow creator to manage
+            .deploy_contract(
+                // For now, we'll need to read the escrow WASM from the template
+                // In production, you'd store this differently or use cross-contract calls
+                self.get_escrow_wasm()
+            )
             .function_call(
                 "new".to_string(),
-                serde_json::to_vec(&immutables).unwrap(),
+                near_sdk::serde_json::to_vec(&(escrow_type, immutables)).unwrap(),
                 NearToken::from_yoctonear(0),
-                GAS_FOR_ESCROW_INIT,
+                GAS_FOR_ESCROW_CALL,
             )
             .then(
                 Self::ext(env::current_account_id())
                     .with_static_gas(Gas::from_gas(10_000_000_000_000))
                     .on_escrow_created(
                         escrow_account_id,
-                        immutables.order_hash,
+                        order_hash_clone,
+                        self.creation_fee,
+                    )
+            )
+    }
+
+    /// Simple approach: Use a lightweight initialization pattern
+    /// Instead of deploying contracts, we'll use cross-contract calls to existing escrow contracts
+    #[payable]
+    pub fn initialize_escrow(
+        &mut self, 
+        escrow_account: AccountId,
+        immutables: EscrowImmutables, 
+        escrow_type: EscrowType
+    ) -> Promise {
+        // Validate payment
+        let attached_deposit = env::attached_deposit();
+        let required_deposit = self.calculate_required_deposit(&immutables);
+        
+        assert!(
+            attached_deposit.as_yoctonear() >= required_deposit,
+            "Insufficient deposit. Required: {}, provided: {}", 
+            required_deposit, attached_deposit.as_yoctonear()
+        );
+
+        // Check if escrow already exists for this order
+        assert!(
+            !self.order_to_escrow.contains_key(&immutables.order_hash),
+            "Escrow already exists for order: {}", immutables.order_hash
+        );
+
+        // Store escrow info
+        let escrow_info = EscrowInfo {
+            escrow_type: escrow_type.clone(),
+            immutables: immutables.clone(),
+            creator: env::predecessor_account_id(),
+            created_at: env::block_timestamp(),
+        };
+
+        let order_hash_clone = immutables.order_hash.clone();
+        self.order_to_escrow.insert(&order_hash_clone, &escrow_account);
+        self.escrow_info.insert(&escrow_account, &escrow_info);
+
+        // Calculate amounts for escrow and fee
+        let escrow_amount = NearToken::from_yoctonear(
+            attached_deposit.as_yoctonear() - self.creation_fee
+        );
+
+        log!(
+            "Initializing {} escrow: {} for order: {}",
+            match escrow_type {
+                EscrowType::Source => "source",
+                EscrowType::Destination => "destination"
+            },
+            escrow_account,
+            immutables.order_hash
+        );
+
+        // Transfer funds and initialize the escrow
+        Promise::new(escrow_account.clone())
+            .transfer(escrow_amount)
+            .function_call(
+                "new".to_string(),
+                near_sdk::serde_json::to_vec(&(escrow_type, immutables)).unwrap(),
+                NearToken::from_yoctonear(0),
+                GAS_FOR_ESCROW_CALL,
+            )
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(Gas::from_gas(10_000_000_000_000))
+                    .on_escrow_created(
+                        escrow_account,
+                        order_hash_clone,
                         self.creation_fee,
                     )
             )
@@ -266,6 +330,10 @@ impl EscrowFactory {
         self.treasury.clone()
     }
 
+    pub fn get_escrow_template(&self) -> Option<AccountId> {
+        self.escrow_template.clone()
+    }
+
     // === Private Methods ===
 
     fn assert_owner(&self) {
@@ -305,6 +373,17 @@ impl EscrowFactory {
         
         account_str.parse().unwrap()
     }
+
+    /// Placeholder for getting escrow WASM code
+    /// In a real implementation, you would:
+    /// 1. Store the WASM as a global contract
+    /// 2. Load from an external source
+    /// 3. Use a pre-deployed template pattern
+    fn get_escrow_wasm(&self) -> Vec<u8> {
+        // For now, return empty - this will need to be implemented based on your deployment strategy
+        // You could read from a file, fetch from another contract, or use global contracts
+        Vec::new()
+    }
 }
 
 // External contract interface for callbacks
@@ -316,4 +395,4 @@ trait ExtSelf {
         order_hash: String,
         fee: Balance,
     ) -> bool;
-} 
+}

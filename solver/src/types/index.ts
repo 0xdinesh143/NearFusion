@@ -96,10 +96,8 @@ export interface NearEscrowImmutables {
 }
 
 export interface Timelocks {
-  src_lock_time: number;
-  dst_lock_time: number;
-  src_unlock_time: number;
-  dst_unlock_time: number;
+  withdrawalPeriod: number;
+  cancellationPeriod: number;
 }
 
 // Solver Configuration

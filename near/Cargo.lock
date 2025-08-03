@@ -149,7 +149,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
-name = "escrow-dst"
+name = "escrow"
 version = "0.1.0"
 dependencies = [
  "borsh",
@@ -162,20 +162,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "escrow-factory"
-version = "0.1.0"
-dependencies = [
- "borsh",
- "near-contract-standards",
- "near-sdk",
- "schemars",
- "serde",
- "serde_json",
- "shared",
-]
-
-[[package]]
-name = "escrow-src"
+name = "factory"
 version = "0.1.0"
 dependencies = [
  "borsh",

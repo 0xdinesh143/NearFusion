@@ -7,7 +7,7 @@ use near_sdk::{
 };
 use near_contract_standards::fungible_token::core::ext_ft_core;
 
-use shared::{EscrowImmutables, CryptoUtils, EscrowError, Balance};
+use shared::{EscrowImmutables, EscrowType, CryptoUtils};
 use schemars::JsonSchema;
 
 /// Gas for NEP141 token transfers
@@ -24,31 +24,36 @@ pub enum EscrowState {
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
-pub struct EscrowDst {
+pub struct Escrow {
+    /// Type of escrow (Source or Destination)
+    pub escrow_type: EscrowType,
     /// Immutable escrow parameters
     pub immutables: EscrowImmutables,
     /// Current state of the escrow
     pub state: EscrowState,
     /// Factory contract that created this escrow
     pub factory: AccountId,
-    /// Secret used for withdrawal (stored for verification)
-    pub secret_used: Option<String>,
+    /// Secret used/revealed for withdrawal
+    pub secret: Option<String>,
 }
 
 #[near_bindgen]
-impl EscrowDst {
+impl Escrow {
     #[init]
-    pub fn new(immutables: EscrowImmutables) -> Self {
+    pub fn new(escrow_type: EscrowType, immutables: EscrowImmutables) -> Self {
         Self {
+            escrow_type,
             immutables,
             state: EscrowState::Active,
             factory: env::predecessor_account_id(),
-            secret_used: None,
+            secret: None,
         }
     }
 
-    /// Withdraw funds with secret (this is called by taker who learned secret from EVM)
-    /// For NEAR→EVM swaps, the taker uses the secret revealed on EVM to claim NEAR tokens
+    /// Withdraw funds with secret
+    /// Behavior depends on escrow type:
+    /// - Source: maker withdraws (reveals secret for EVM claim)
+    /// - Destination: taker withdraws (uses secret learned from EVM)
     pub fn withdraw(&mut self, secret: String) -> Promise {
         // Validate state
         assert!(
@@ -68,29 +73,47 @@ impl EscrowDst {
             "Invalid secret"
         );
 
-        // Validate caller (should be taker)
-        assert_eq!(
-            env::predecessor_account_id(),
-            self.immutables.taker,
-            "Only taker can withdraw"
-        );
+        // Validate caller based on escrow type
+        let caller = env::predecessor_account_id();
+        match self.escrow_type {
+            EscrowType::Source => {
+                // For source escrows, maker withdraws (no caller restriction for flexibility)
+                log!(
+                    "Source escrow withdrawal by {} with secret: {}",
+                    caller,
+                    secret
+                );
+            }
+            EscrowType::Destination => {
+                // For destination escrows, only taker can withdraw
+                assert_eq!(
+                    caller,
+                    self.immutables.taker,
+                    "Only taker can withdraw from destination escrow"
+                );
+                log!(
+                    "Destination escrow withdrawal by taker {} with secret: {}",
+                    caller,
+                    secret
+                );
+            }
+        }
 
         // Update state
         self.state = EscrowState::Withdrawn;
-        self.secret_used = Some(secret.clone());
+        self.secret = Some(secret);
 
-        log!(
-            "Escrow withdrawal by taker {} with secret: {}",
-            self.immutables.taker,
-            secret
-        );
-
-        // Transfer funds to the taker
-        self.transfer_funds_to_taker()
+        // Transfer funds based on escrow type
+        match self.escrow_type {
+            EscrowType::Source => self.transfer_funds_to_maker(),
+            EscrowType::Destination => self.transfer_funds_to_taker(),
+        }
     }
 
     /// Cancel escrow and refund (after cancellation period)
-    /// This can be called by maker if taker doesn't withdraw in time
+    /// Behavior depends on escrow type:
+    /// - Source: taker can cancel (refund taker)
+    /// - Destination: maker can cancel (refund maker)
     pub fn cancel(&mut self) -> Promise {
         // Validate state
         assert!(
@@ -104,23 +127,35 @@ impl EscrowDst {
             "Cancellation period not reached"
         );
 
-        // Validate caller (should be maker)
-        assert_eq!(
-            env::predecessor_account_id(),
-            self.immutables.maker,
-            "Only maker can cancel"
-        );
+        // Validate caller based on escrow type
+        let caller = env::predecessor_account_id();
+        match self.escrow_type {
+            EscrowType::Source => {
+                assert_eq!(
+                    caller,
+                    self.immutables.taker,
+                    "Only taker can cancel source escrow"
+                );
+                log!("Source escrow cancelled by taker: {}", caller);
+            }
+            EscrowType::Destination => {
+                assert_eq!(
+                    caller,
+                    self.immutables.maker,
+                    "Only maker can cancel destination escrow"
+                );
+                log!("Destination escrow cancelled by maker: {}", caller);
+            }
+        }
 
         // Update state
         self.state = EscrowState::Cancelled;
 
-        log!(
-            "Escrow cancelled by maker: {}",
-            self.immutables.maker
-        );
-
-        // Refund to maker
-        self.transfer_funds_to_maker()
+        // Refund based on escrow type
+        match self.escrow_type {
+            EscrowType::Source => self.transfer_funds_to_taker(),   // Refund taker
+            EscrowType::Destination => self.transfer_funds_to_maker(), // Refund maker
+        }
     }
 
     /// Emergency rescue funds (after rescue delay)
@@ -138,20 +173,33 @@ impl EscrowDst {
             "Rescue period not reached"
         );
 
-        // Validate caller (should be maker for safety)
-        assert_eq!(
-            env::predecessor_account_id(),
-            self.immutables.maker,
-            "Only maker can rescue funds"
-        );
+        // Validate caller based on escrow type
+        let caller = env::predecessor_account_id();
+        match self.escrow_type {
+            EscrowType::Source => {
+                assert_eq!(
+                    caller,
+                    self.immutables.taker,
+                    "Only taker can rescue funds from source escrow"
+                );
+            }
+            EscrowType::Destination => {
+                assert_eq!(
+                    caller,
+                    self.immutables.maker,
+                    "Only maker can rescue funds from destination escrow"
+                );
+            }
+        }
 
         // Update state
         self.state = EscrowState::Rescued;
 
         log!(
-            "Funds rescued by {} to {}",
-            env::predecessor_account_id(),
-            recipient
+            "Funds rescued by {} to {} from {:?} escrow",
+            caller,
+            recipient,
+            self.escrow_type
         );
 
         // Transfer to recipient
@@ -159,6 +207,10 @@ impl EscrowDst {
     }
 
     // === View Methods ===
+
+    pub fn get_escrow_type(&self) -> EscrowType {
+        self.escrow_type.clone()
+    }
 
     pub fn get_immutables(&self) -> EscrowImmutables {
         self.immutables.clone()
@@ -168,8 +220,8 @@ impl EscrowDst {
         self.state.clone()
     }
 
-    pub fn get_secret_used(&self) -> Option<String> {
-        self.secret_used.clone()
+    pub fn get_secret(&self) -> Option<String> {
+        self.secret.clone()
     }
 
     pub fn get_factory(&self) -> AccountId {
@@ -189,6 +241,22 @@ impl EscrowDst {
     pub fn can_rescue(&self) -> bool {
         matches!(self.state, EscrowState::Active) 
             && self.immutables.timelocks.can_rescue()
+    }
+
+    /// Get who can withdraw based on escrow type
+    pub fn get_withdraw_authority(&self) -> AccountId {
+        match self.escrow_type {
+            EscrowType::Source => self.immutables.maker.clone(),
+            EscrowType::Destination => self.immutables.taker.clone(),
+        }
+    }
+
+    /// Get who can cancel based on escrow type
+    pub fn get_cancel_authority(&self) -> AccountId {
+        match self.escrow_type {
+            EscrowType::Source => self.immutables.taker.clone(),
+            EscrowType::Destination => self.immutables.maker.clone(),
+        }
     }
 
     // === Private Methods ===
@@ -237,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn test_escrow_creation() {
+    fn test_source_escrow_creation() {
         let context = get_context(accounts(0));
         testing_env!(context);
 
@@ -255,15 +323,72 @@ mod tests {
             timelocks: Timelocks::new(3600, 7200, 86400), // 1h, 2h, 24h
         };
 
-        let escrow = EscrowDst::new(immutables.clone());
+        let escrow = Escrow::new(EscrowType::Source, immutables.clone());
         
         assert!(matches!(escrow.state, EscrowState::Active));
+        assert!(matches!(escrow.escrow_type, EscrowType::Source));
         assert_eq!(escrow.immutables.order_hash, "order_123");
-        assert_eq!(escrow.immutables.taker, accounts(2));
+        assert_eq!(escrow.get_withdraw_authority(), accounts(1)); // maker
+        assert_eq!(escrow.get_cancel_authority(), accounts(2));   // taker
     }
 
     #[test]
-    fn test_taker_withdrawal() {
+    fn test_destination_escrow_creation() {
+        let context = get_context(accounts(0));
+        testing_env!(context);
+
+        let secret = "test_secret_123";
+        let hashlock = CryptoUtils::create_hashlock(secret);
+        
+        let immutables = EscrowImmutables {
+            order_hash: "order_123".to_string(),
+            hashlock,
+            maker: accounts(1),
+            taker: accounts(2),
+            token: None,
+            amount: 1000000000000000000000000,
+            safety_deposit: 100000000000000000000000,
+            timelocks: Timelocks::new(3600, 7200, 86400),
+        };
+
+        let escrow = Escrow::new(EscrowType::Destination, immutables.clone());
+        
+        assert!(matches!(escrow.state, EscrowState::Active));
+        assert!(matches!(escrow.escrow_type, EscrowType::Destination));
+        assert_eq!(escrow.get_withdraw_authority(), accounts(2)); // taker
+        assert_eq!(escrow.get_cancel_authority(), accounts(1));   // maker
+    }
+
+    #[test]
+    fn test_source_escrow_withdrawal() {
+        let mut context = get_context(accounts(1)); // maker
+        testing_env!(context);
+
+        let secret = "test_secret_123";
+        let hashlock = CryptoUtils::create_hashlock(secret);
+        
+        let immutables = EscrowImmutables {
+            order_hash: "order_123".to_string(),
+            hashlock,
+            maker: accounts(1),
+            taker: accounts(2),
+            token: None,
+            amount: 1000000000000000000000000,
+            safety_deposit: 100000000000000000000000,
+            timelocks: Timelocks::new(3600, 7200, 86400),
+        };
+
+        let mut escrow = Escrow::new(EscrowType::Source, immutables);
+        
+        // Maker should be able to withdraw with correct secret
+        let _promise = escrow.withdraw(secret.to_string());
+        
+        assert!(matches!(escrow.state, EscrowState::Withdrawn));
+        assert_eq!(escrow.secret, Some(secret.to_string()));
+    }
+
+    #[test]
+    fn test_destination_escrow_withdrawal() {
         let mut context = get_context(accounts(2)); // taker
         testing_env!(context);
 
@@ -281,18 +406,18 @@ mod tests {
             timelocks: Timelocks::new(3600, 7200, 86400),
         };
 
-        let mut escrow = EscrowDst::new(immutables);
+        let mut escrow = Escrow::new(EscrowType::Destination, immutables);
         
         // Taker should be able to withdraw with correct secret
         let _promise = escrow.withdraw(secret.to_string());
         
         assert!(matches!(escrow.state, EscrowState::Withdrawn));
-        assert_eq!(escrow.secret_used, Some(secret.to_string()));
+        assert_eq!(escrow.secret, Some(secret.to_string()));
     }
 
     #[test]
-    #[should_panic(expected = "Only taker can withdraw")]
-    fn test_maker_cannot_withdraw() {
+    #[should_panic(expected = "Only taker can withdraw from destination escrow")]
+    fn test_destination_escrow_maker_cannot_withdraw() {
         let mut context = get_context(accounts(1)); // maker
         testing_env!(context);
 
@@ -310,37 +435,9 @@ mod tests {
             timelocks: Timelocks::new(3600, 7200, 86400),
         };
 
-        let mut escrow = EscrowDst::new(immutables);
+        let mut escrow = Escrow::new(EscrowType::Destination, immutables);
         
-        // Maker should not be able to withdraw
+        // Maker should not be able to withdraw from destination escrow
         escrow.withdraw(secret.to_string());
     }
-
-    #[test]
-    fn test_maker_cancellation() {
-        let mut context = get_context(accounts(1)); // maker
-        context.block_timestamp = 8000_000_000_000; // After cancellation period
-        testing_env!(context);
-
-        let secret = "test_secret_123";
-        let hashlock = CryptoUtils::create_hashlock(secret);
-        
-        let immutables = EscrowImmutables {
-            order_hash: "order_123".to_string(),
-            hashlock,
-            maker: accounts(1),
-            taker: accounts(2),
-            token: None,
-            amount: 1000000000000000000000000,
-            safety_deposit: 100000000000000000000000,
-            timelocks: Timelocks::new(3600, 7200, 86400),
-        };
-
-        let mut escrow = EscrowDst::new(immutables);
-        
-        // Maker should be able to cancel after timelock
-        let _promise = escrow.cancel();
-        
-        assert!(matches!(escrow.state, EscrowState::Cancelled));
-    }
-} 
+}

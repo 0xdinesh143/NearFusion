@@ -4,131 +4,209 @@ import {
 } from "@nomicfoundation/hardhat-toolbox-viem/network-helpers";
 import { expect } from "chai";
 import hre from "hardhat";
-import { getAddress, parseGwei } from "viem";
+import { getAddress, parseEther, keccak256, encodePacked } from "viem";
 
-describe("Lock", function () {
+describe("NearEscrow", function () {
   // We define a fixture to reuse the same setup in every test.
   // We use loadFixture to run this setup once, snapshot that state,
   // and reset Hardhat Network to that snapshot in every test.
-  async function deployOneYearLockFixture() {
-    const ONE_YEAR_IN_SECS = 365 * 24 * 60 * 60;
+  async function deployEscrowFixture() {
+    const [owner, maker, taker, treasury] = await hre.viem.getWalletClients();
 
-    const lockedAmount = parseGwei("1");
-    const unlockTime = BigInt((await time.latest()) + ONE_YEAR_IN_SECS);
+    // Deploy a mock ERC20 token for testing
+    const mockToken = await hre.viem.deployContract("MockERC20", [
+      "Test Token",
+      "TEST",
+      parseEther("1000000") // 1M tokens
+    ]);
 
-    // Contracts are deployed using the first signer/account by default
-    const [owner, otherAccount] = await hre.viem.getWalletClients();
+    // Mint tokens to maker for testing
+    await mockToken.write.mint([maker.account.address, parseEther("10000")]);
 
-    const lock = await hre.viem.deployContract("Lock", [unlockTime], {
-      value: lockedAmount,
-    });
+    const rescueDelaySrc = 86400; // 1 day
+    const rescueDelayDst = 86400; // 1 day
+    const creationFee = parseEther("0.001"); // 0.001 ETH
+    
+    const nearConfig = {
+      minConfirmations: 5n,
+      dustThreshold: 1000n,
+      maxAmount: parseEther("100000")
+    };
+
+    // Deploy NearEscrowFactory
+    const factory = await hre.viem.deployContract("NearEscrowFactory", [
+      mockToken.address,
+      owner.account.address,
+      rescueDelaySrc,
+      rescueDelayDst,
+      creationFee,
+      treasury.account.address,
+      nearConfig
+    ]);
+
+    // Get implementation addresses
+    const srcImplementation = await factory.read.Near_ESCROW_SRC_IMPLEMENTATION();
+    const dstImplementation = await factory.read.Near_ESCROW_DST_IMPLEMENTATION();
 
     const publicClient = await hre.viem.getPublicClient();
 
+    // Sample immutables for testing
+    const currentTime = await time.latest();
+    const secret = keccak256(encodePacked(["string"], ["test-secret"]));
+    const hashlock = keccak256(encodePacked(["bytes32"], [secret]));
+    
+    const timelocks = BigInt(currentTime + 3600) << 224n | // deployedAt (1 hour from now)
+                     3600n << 168n |                      // withdrawal (1 hour)
+                     7200n << 112n |                      // publicWithdrawal (2 hours)
+                     10800n << 56n;                       // cancellation (3 hours)
+
+    const sampleImmutables = {
+      orderHash: keccak256(encodePacked(["string"], ["test-order"])),
+      hashlock,
+      maker: BigInt(maker.account.address),
+      taker: BigInt(taker.account.address),
+      token: 0n, // ETH
+      amount: parseEther("1"),
+      safetyDeposit: parseEther("0.1"),
+      timelocks
+    };
+
     return {
-      lock,
-      unlockTime,
-      lockedAmount,
+      factory,
+      mockToken,
+      srcImplementation,
+      dstImplementation,
       owner,
-      otherAccount,
+      maker,
+      taker,
+      treasury,
       publicClient,
+      sampleImmutables,
+      secret,
+      hashlock,
+      creationFee
     };
   }
 
-  describe("Deployment", function () {
-    it("Should set the right unlockTime", async function () {
-      const { lock, unlockTime } = await loadFixture(deployOneYearLockFixture);
+  describe("Factory Deployment", function () {
+    it("Should deploy NearEscrowFactory correctly", async function () {
+      const { factory, owner, treasury, mockToken } = await loadFixture(deployEscrowFixture);
 
-      expect(await lock.read.unlockTime()).to.equal(unlockTime);
+      expect(await factory.read.owner()).to.equal(getAddress(owner.account.address));
+      expect(await factory.read.treasury()).to.equal(getAddress(treasury.account.address));
+      expect(await factory.read.ACCESS_TOKEN()).to.equal(getAddress(mockToken.address));
     });
 
-    it("Should set the right owner", async function () {
-      const { lock, owner } = await loadFixture(deployOneYearLockFixture);
+    it("Should have valid implementation addresses", async function () {
+      const { srcImplementation, dstImplementation } = await loadFixture(deployEscrowFixture);
 
-      expect(await lock.read.owner()).to.equal(
-        getAddress(owner.account.address)
-      );
+      expect(srcImplementation).to.not.equal("0x0000000000000000000000000000000000000000");
+      expect(dstImplementation).to.not.equal("0x0000000000000000000000000000000000000000");
     });
 
-    it("Should receive and store the funds to lock", async function () {
-      const { lock, lockedAmount, publicClient } = await loadFixture(
-        deployOneYearLockFixture
-      );
+    it("Should set creation fee correctly", async function () {
+      const { factory, creationFee } = await loadFixture(deployEscrowFixture);
 
-      expect(
-        await publicClient.getBalance({
-          address: lock.address,
-        })
-      ).to.equal(lockedAmount);
-    });
-
-    it("Should fail if the unlockTime is not in the future", async function () {
-      // We don't use the fixture here because we want a different deployment
-      const latestTime = BigInt(await time.latest());
-      await expect(
-        hre.viem.deployContract("Lock", [latestTime], {
-          value: 1n,
-        })
-      ).to.be.rejectedWith("Unlock time should be in the future");
+      expect(await factory.read.creationFee()).to.equal(creationFee);
     });
   });
 
-  describe("Withdrawals", function () {
-    describe("Validations", function () {
-      it("Should revert with the right error if called too soon", async function () {
-        const { lock } = await loadFixture(deployOneYearLockFixture);
+  describe("Escrow Source (EVM→Near)", function () {
+    it("Should create source escrow with ETH", async function () {
+      const { factory, sampleImmutables, creationFee, maker } = await loadFixture(deployEscrowFixture);
 
-        await expect(lock.write.withdraw()).to.be.rejectedWith(
-          "You can't withdraw yet"
-        );
-      });
+      const totalRequired = sampleImmutables.amount + sampleImmutables.safetyDeposit + creationFee;
 
-      it("Should revert with the right error if called from another account", async function () {
-        const { lock, unlockTime, otherAccount } = await loadFixture(
-          deployOneYearLockFixture
-        );
-
-        // We can increase the time in Hardhat Network
-        await time.increaseTo(unlockTime);
-
-        // We retrieve the contract with a different account to send a transaction
-        const lockAsOtherAccount = await hre.viem.getContractAt(
-          "Lock",
-          lock.address,
-          { client: { wallet: otherAccount } }
-        );
-        await expect(lockAsOtherAccount.write.withdraw()).to.be.rejectedWith(
-          "You aren't the owner"
-        );
-      });
-
-      it("Shouldn't fail if the unlockTime has arrived and the owner calls it", async function () {
-        const { lock, unlockTime } = await loadFixture(
-          deployOneYearLockFixture
-        );
-
-        // Transactions are sent using the first signer by default
-        await time.increaseTo(unlockTime);
-
-        await expect(lock.write.withdraw()).to.be.fulfilled;
-      });
+      await expect(
+        factory.write.createSrcEscrow([sampleImmutables], {
+          value: totalRequired,
+          account: maker.account
+        })
+      ).to.not.be.rejected;
     });
 
-    describe("Events", function () {
-      it("Should emit an event on withdrawals", async function () {
-        const { lock, unlockTime, lockedAmount, publicClient } =
-          await loadFixture(deployOneYearLockFixture);
+    it("Should revert if insufficient ETH sent", async function () {
+      const { factory, sampleImmutables, maker } = await loadFixture(deployEscrowFixture);
 
-        await time.increaseTo(unlockTime);
+      const insufficientAmount = parseEther("0.5"); // Less than required
 
-        const hash = await lock.write.withdraw();
-        await publicClient.waitForTransactionReceipt({ hash });
+      await expect(
+        factory.write.createSrcEscrow([sampleImmutables], {
+          value: insufficientAmount,
+          account: maker.account
+        })
+      ).to.be.rejected;
+    });
+  });
 
-        // get the withdrawal events in the latest block
-        const withdrawalEvents = await lock.getEvents.Withdrawal();
-        expect(withdrawalEvents).to.have.lengthOf(1);
-        expect(withdrawalEvents[0].args.amount).to.equal(lockedAmount);
+  describe("Escrow Destination (Near→EVM)", function () {
+    it("Should create destination escrow with ETH", async function () {
+      const { factory, sampleImmutables, creationFee, maker } = await loadFixture(deployEscrowFixture);
+
+      const totalRequired = sampleImmutables.amount + sampleImmutables.safetyDeposit + creationFee;
+
+      await expect(
+        factory.write.createDstEscrow([sampleImmutables], {
+          value: totalRequired,
+          account: maker.account
+        })
+      ).to.not.be.rejected;
+    });
+
+    it("Should create destination escrow with ERC20 tokens", async function () {
+      const { factory, sampleImmutables, mockToken, creationFee, maker } = await loadFixture(deployEscrowFixture);
+
+      // Update immutables to use ERC20 token
+      const tokenImmutables = {
+        ...sampleImmutables,
+        token: BigInt(mockToken.address)
+      };
+
+      // Approve tokens first
+      await mockToken.write.approve([factory.address, sampleImmutables.amount], {
+        account: maker.account
       });
+
+      const totalRequired = sampleImmutables.safetyDeposit + creationFee;
+
+      await expect(
+        factory.write.createDstEscrow([tokenImmutables], {
+          value: totalRequired,
+          account: maker.account
+        })
+      ).to.not.be.rejected;
+    });
+  });
+
+  describe("Access Control", function () {
+    it("Should only allow owner to update creation fee", async function () {
+      const { factory, owner, maker } = await loadFixture(deployEscrowFixture);
+
+      const newFee = parseEther("0.002");
+
+      // Should work for owner
+      await expect(
+        factory.write.setCreationFee([newFee], { account: owner.account })
+      ).to.not.be.rejected;
+
+      // Should revert for non-owner
+      await expect(
+        factory.write.setCreationFee([newFee], { account: maker.account })
+      ).to.be.rejected;
+    });
+
+    it("Should only allow owner to update treasury", async function () {
+      const { factory, owner, maker, taker } = await loadFixture(deployEscrowFixture);
+
+      // Should work for owner
+      await expect(
+        factory.write.setTreasury([taker.account.address], { account: owner.account })
+      ).to.not.be.rejected;
+
+      // Should revert for non-owner
+      await expect(
+        factory.write.setTreasury([taker.account.address], { account: maker.account })
+      ).to.be.rejected;
     });
   });
 });

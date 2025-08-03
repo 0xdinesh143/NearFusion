@@ -230,15 +230,32 @@ export default function SwapPage() {
     };
   }, [currentSwap]);
 
+  // Helper function to normalize decimal input (handle both comma and dot)
+  const normalizeDecimalInput = (value: string): string => {
+    // Replace comma with dot for consistent parsing
+    return value.replace(/,/g, '.');
+  };
+
+  // Helper function to parse amount safely
+  const parseAmount = (value: string): number => {
+    const normalized = normalizeDecimalInput(value);
+    const parsed = parseFloat(normalized);
+    return isNaN(parsed) ? 0 : parsed;
+  };
+
   const handleFromAmountChange = (value: string) => {
-    setFromAmount(value);
-    if (value && !isNaN(parseFloat(value)) && tokenPrices.ETH && tokenPrices.NEAR) {
+    console.log('handleFromAmountChange', value);
+    setFromAmount(value); // Keep original user input (with comma if they typed it)
+    
+    const numericValue = parseAmount(value);
+    
+    if (value && numericValue > 0 && tokenPrices.ETH && tokenPrices.NEAR) {
       const fromPrice = tokenPrices[fromToken as keyof TokenPrices];
       const toPrice = tokenPrices[toToken as keyof TokenPrices];
       
       if (fromPrice && toPrice) {
         // Calculate output amount based on real prices
-        const usdValue = parseFloat(value) * fromPrice;
+        const usdValue = numericValue * fromPrice;
         const outputAmount = usdValue / toPrice;
         
         // Apply 1% tolerance (reduce output by 1%)
@@ -438,10 +455,12 @@ export default function SwapPage() {
             <div className="flex items-center justify-between mb-4">
               <input
                 type="text"
-                value={Number(fromAmount).toFixed(6)}
+                value={fromAmount}
                 onChange={(e) => handleFromAmountChange(e.target.value)}
                 placeholder="0.0"
                 className="text-4xl font-light bg-transparent border-none outline-none text-white placeholder-gray-400 w-full"
+                // Allow decimal input with both comma and dot
+                pattern="[0-9]*[.,]?[0-9]*"
               />
               <div className="min-w-fit flex items-center gap-2 bg-gray-700 rounded-xl px-3 py-2">
                 <Image

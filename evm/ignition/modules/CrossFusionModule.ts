@@ -10,7 +10,7 @@ const CrossFusionModule = buildModule("CrossFusionModule", (m) => {
     owner: deployer,
     rescueDelaySrc: 1 * 24 * 3600, // 1 day
     rescueDelayDst: 1 * 24 * 3600, // 1 day  
-    creationFee: "0", // 0.001 ETH
+    creationFee: "0", 
     treasury: deployer,
     nearConfig: {
       minConfirmations: 1,

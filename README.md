@@ -49,12 +49,14 @@ Think of it like a digital escrow that works with math instead of lawyers:
 - TypeScript prevents the stupid bugs that waste hours
 - Tailwind makes it actually look good without fighting CSS
 
-**Solver: Near Shade Agent + TEE (Trusted Execution Environment)**
+**Solver: NEAR Shade Agent + TEE (Trusted Execution Environment)**
 
-- Coordinates swaps across different blockchains
+- Built on NEAR's Shade Agent Framework for privacy-preserving computation
 - TEE ensures the solver can't cheat or see your secrets
+- Hardware-secured private key management and remote attestation
+- Coordinates swaps across different blockchains with verifiable integrity
 - REST API makes it easy for frontends to integrate
-
+  
 **Smart Contracts: Solidity + Rust**
 
 - Solidity for EVM chains (Ethereum, Polygon, BSC, Arbitrum)
